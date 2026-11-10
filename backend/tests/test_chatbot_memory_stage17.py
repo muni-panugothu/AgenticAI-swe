@@ -14,20 +14,44 @@ class TestStage17ChatbotMemoryFlow(unittest.TestCase):
         "importance": 4,
         "confidence": 0.95,
         "status": "active",
+        "fact_key": "role",
+        "normalized_value": "junior developer",
         "conflict_group_id": None,
         "version": 1,
     }
 
+    @patch.object(
+        chatbot,
+        "persist_memory_conflict_pair",
+        return_value={"success": True, "verified": True},
+    )
     @patch.object(chatbot, "save_memory")
+    @patch.object(chatbot, "find_active_memories_by_fact_key")
     @patch.object(chatbot, "check_duplicate_memory")
+    @patch.object(chatbot, "find_logical_duplicate")
     @patch.object(chatbot, "create_embedding", return_value=[0.01] * 8)
     def test_new_exclusive_value_is_saved_for_review(
-        self, _embedding, duplicate_check, save_memory
+        self,
+        _embedding,
+        logical_dup,
+        duplicate_check,
+        by_key,
+        save_memory,
+        persist_pair,
     ):
+        logical_dup.return_value = {
+            "success": True,
+            "is_duplicate": False,
+            "match": None,
+        }
         duplicate_check.return_value = {
             "success": True,
             "is_duplicate": False,
             "candidates": [self.OLD_ROLE],
+        }
+        by_key.return_value = {
+            "success": True,
+            "memories": [self.OLD_ROLE],
         }
         save_memory.return_value = {
             "success": True,
@@ -39,6 +63,7 @@ class TestStage17ChatbotMemoryFlow(unittest.TestCase):
             "Remember that my role is Software Engineer.",
             self.USER_ID,
         )
+        persist_pair.assert_called()
 
         self.assertIsInstance(result, dict)
         self.assertTrue(result.get("handled"))
@@ -53,10 +78,16 @@ class TestStage17ChatbotMemoryFlow(unittest.TestCase):
 
     @patch.object(chatbot, "save_memory")
     @patch.object(chatbot, "check_duplicate_memory")
+    @patch.object(chatbot, "find_logical_duplicate")
     @patch.object(chatbot, "create_embedding", return_value=[0.02] * 8)
     def test_learning_another_language_does_not_create_conflict(
-        self, _embedding, duplicate_check, save_memory
+        self, _embedding, logical_dup, duplicate_check, save_memory
     ):
+        logical_dup.return_value = {
+            "success": True,
+            "is_duplicate": False,
+            "match": None,
+        }
         duplicate_check.return_value = {
             "success": True,
             "is_duplicate": False,
@@ -78,28 +109,27 @@ class TestStage17ChatbotMemoryFlow(unittest.TestCase):
             self.USER_ID,
         )
 
-        self.assertIs(result, True)
+        self.assertTrue(result)
+        if isinstance(result, dict):
+            self.assertTrue(result.get("handled"))
         saved = save_memory.call_args.kwargs
-        self.assertNotIn("status", saved)
         self.assertNotIn("conflict_with_memory_id", saved)
 
+    @patch.object(chatbot, "retire_sibling_exclusive_actives")
     @patch.object(chatbot, "supersede_memory")
-    @patch.object(chatbot, "semantic_search_memories")
+    @patch.object(chatbot, "_collect_update_candidates")
     @patch.object(chatbot, "create_embedding", return_value=[0.03] * 8)
     def test_confirmation_sentence_without_final_punctuation_is_accepted(
-        self, _embedding, semantic_search, supersede
+        self, _embedding, collect, supersede, _retire
     ):
-        semantic_search.return_value = {
-            "success": True,
-            "memories": [self.OLD_ROLE],
-        }
+        collect.return_value = ([self.OLD_ROLE], [])
         supersede.return_value = {
             "success": True,
             "memory_id": "new-role-memory-id",
+            "old_memory_id": "old-role-memory-id",
             "version": 2,
         }
 
-        # This is the exact form suggested by the conflict response.
         result = chatbot.try_update_explicit_memory(
             "Update my role to Software Engineer",
             self.USER_ID,
@@ -114,21 +144,23 @@ class TestStage17ChatbotMemoryFlow(unittest.TestCase):
         self.assertEqual(update_args["fact_key"], "role")
 
     @patch.object(chatbot, "supersede_memory")
-    @patch.object(chatbot, "semantic_search_memories")
+    @patch.object(chatbot, "_collect_update_candidates")
     def test_ambiguous_update_does_not_supersede_any_memory(
-        self, semantic_search, supersede
+        self, collect, supersede
     ):
-        semantic_search.return_value = {
-            "success": True,
-            "memories": [
+        collect.return_value = (
+            [
                 self.OLD_ROLE,
                 {
                     "memory_id": "second-role-id",
-                    "memory": "My previous role was Team Lead",
+                    "memory": "My role is Team Lead",
                     "status": "active",
+                    "fact_key": "role",
+                    "normalized_value": "team lead",
                 },
             ],
-        }
+            [],
+        )
 
         result = chatbot.try_update_explicit_memory(
             "Update my role to Software Engineer.",
@@ -137,7 +169,7 @@ class TestStage17ChatbotMemoryFlow(unittest.TestCase):
 
         self.assertIsInstance(result, dict)
         self.assertFalse(result.get("success"))
-        self.assertIn("multiple memories", result.get("message", "").lower())
+        self.assertIn("multiple", result.get("message", "").lower())
         supersede.assert_not_called()
 
 

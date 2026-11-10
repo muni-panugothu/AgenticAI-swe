@@ -112,17 +112,25 @@ class TestStage17MemoryService(unittest.TestCase):
 
     def test_semantic_search_pipeline_excludes_review_and_superseded(self):
         collection = MagicMock()
-        collection.aggregate.return_value = iter([
-            {
-                "_id": ObjectId(),
-                "memory": "My role is Software Engineer",
-                "importance": 4,
-                "confidence": 0.95,
-                "status": "active",
-                "fact_key": "role",
-                "score": 0.95,
-            }
-        ])
+        # Stage 19 searches active first, then optionally needs_review.
+        collection.aggregate.side_effect = [
+            iter([
+                {
+                    "_id": ObjectId(),
+                    "user_id": "stage17-test-user",
+                    "owner_id": "stage17-test-user",
+                    "permission_level": "private",
+                    "shared_with": [],
+                    "memory": "My role is Software Engineer",
+                    "importance": 4,
+                    "confidence": 0.95,
+                    "status": "active",
+                    "fact_key": "role",
+                    "score": 0.95,
+                }
+            ]),
+            iter([]),  # pending-review pass
+        ]
 
         with (
             patch.object(memory_service, "memory_collection", collection),
@@ -139,8 +147,9 @@ class TestStage17MemoryService(unittest.TestCase):
             self.assertEqual(len(result["memories"]), 1)
             self.assertEqual(result["memories"][0]["status"], "active")
 
-        pipeline = collection.aggregate.call_args.args[0]
-        status_match = pipeline[1]["$match"]["$or"]
+        # First aggregate call is the active-status search.
+        first_pipeline = collection.aggregate.call_args_list[0].args[0]
+        status_match = first_pipeline[1]["$match"]["$or"]
         self.assertIn({"status": "active"}, status_match)
         self.assertIn({"status": {"$exists": False}}, status_match)
 
@@ -200,8 +209,12 @@ class TestStage17MemoryService(unittest.TestCase):
         self.assertEqual(old_update_changes["superseded_by_memory_id"], str(new_id))
 
         # Pending conflict records linked to the prior active memory are resolved.
-        pending_filter = collection.update_many.call_args.args[0]
-        pending_changes = collection.update_many.call_args.args[1]["$set"]
+        # First update_many targets conflict_with_memory_id; a later call may
+        # also resolve by fact_key.
+        pending_calls = collection.update_many.call_args_list
+        self.assertGreaterEqual(len(pending_calls), 1)
+        pending_filter = pending_calls[0].args[0]
+        pending_changes = pending_calls[0].args[1]["$set"]
         self.assertEqual(pending_filter["status"], "needs_review")
         self.assertEqual(pending_filter["conflict_with_memory_id"], str(old_id))
         self.assertEqual(pending_changes["status"], "resolved")

@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "AIChatBot",
+    "slug": "AIChatBot",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "aichatbot",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.aichatbot.app"
+    },
+    "android": {
+      "package": "com.aichatbot.app",
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#F8F5FF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-dev-client",
+      "expo-document-picker",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
+  }
+}

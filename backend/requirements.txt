@@ -6,6 +6,11 @@ groq
 langgraph
 langchain-core
 requests
-
-
-
+pymongo
+google-genai
+upstash-redis
+pydantic
+email-validator
+PyJWT
+argon2-cffi
+slowapi

@@ -8,12 +8,18 @@ import os
 import re
 from pathlib import Path
 
+from app.tools.path_sandbox import (
+    ERROR_PATH_DENIED,
+    ERROR_PATH_TRAVERSAL,
+    PROJECT_ROOT,
+    open_text_under_root,
+    path_still_inside_root,
+    resolve_under_root,
+)
+
 
 MAX_READ_CHARS = 3200
 MAX_LINE_SPAN = int(os.getenv("MAX_LINE_SPAN", "70"))
-
-# Backend package root (…/backend). Reads are confined to this tree.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _TOP_DEF_RE = re.compile(r"^(async\s+)?def\s+\w+|^class\s+\w+")
 
@@ -30,31 +36,23 @@ def _error(error_code: str, message: str, **extra) -> dict:
 
 def _resolve_safe_path(file_path: str) -> Path | dict:
     """Resolve a user-supplied path inside PROJECT_ROOT or return an error dict."""
-    if not file_path or not str(file_path).strip():
-        return _error("INVALID_PATH", "file_path is required.")
-
-    raw = str(file_path).strip().replace("\\", "/")
-    # Reject absolute paths and explicit traversal tokens early.
-    if os.path.isabs(raw) or raw.startswith("/") or (len(raw) > 1 and raw[1] == ":"):
+    result = resolve_under_root(
+        file_path,
+        root=PROJECT_ROOT,
+        expect_dir=False,
+    )
+    if isinstance(result, dict):
+        # Preserve historical shape for read_file errors (no ``error`` key required).
         return _error(
-            "PATH_TRAVERSAL_DENIED",
-            "Absolute paths are not allowed. Use a project-relative path.",
+            result.get("error_code") or ERROR_PATH_TRAVERSAL,
+            result.get("message") or "Access to this path is denied.",
+            **{
+                k: v
+                for k, v in result.items()
+                if k not in {"success", "error_code", "message", "error"}
+            },
         )
-    if ".." in Path(raw).parts:
-        return _error(
-            "PATH_TRAVERSAL_DENIED",
-            "Path traversal is not allowed.",
-        )
-
-    candidate = (PROJECT_ROOT / raw).resolve()
-    try:
-        candidate.relative_to(PROJECT_ROOT.resolve())
-    except ValueError:
-        return _error(
-            "PATH_TRAVERSAL_DENIED",
-            "The requested path is outside the allowed project root.",
-        )
-    return candidate
+    return result
 
 
 def _top_level_def_indices(selected_lines: list[str]) -> list[int]:
@@ -305,6 +303,16 @@ def clip_to_function_boundary(
     return _slice(0, len(selected_lines))
 
 
+def _safe_user_path_label(file_path) -> str:
+    """Echo only a sanitized relative label — never an absolute filesystem path."""
+    raw = str(file_path or "").strip().replace("\\", "/")
+    if not raw or ".." in raw.split("/") or raw.startswith("/") or (
+        len(raw) > 1 and raw[1] == ":"
+    ):
+        return "[denied]"
+    return raw[:240]
+
+
 def read_file(file_path, line_start=None, line_end=None):
     """Read a small line window from a project file.
 
@@ -315,25 +323,31 @@ def read_file(file_path, line_start=None, line_end=None):
     if isinstance(resolved, dict):
         return resolved
 
+    path_label = _safe_user_path_label(file_path)
+
+    # Final confinement check immediately before existence probes / open.
+    if not path_still_inside_root(resolved, root=PROJECT_ROOT):
+        return _error(ERROR_PATH_TRAVERSAL, "Access to this path is denied.")
+
     if not resolved.exists():
         return _error(
             "FILE_NOT_FOUND",
             "The requested file does not exist.",
-            file_path=str(file_path),
+            file_path=path_label,
         )
 
     if resolved.is_dir():
         return _error(
             "IS_DIRECTORY",
             "The requested path is a directory, not a file.",
-            file_path=str(file_path),
+            file_path=path_label,
         )
 
     if not resolved.is_file():
         return _error(
             "NOT_A_FILE",
             "The requested path is not a readable file.",
-            file_path=str(file_path),
+            file_path=path_label,
         )
 
     if (
@@ -348,7 +362,7 @@ def read_file(file_path, line_start=None, line_end=None):
                 "Provide line_start and line_end for one function or a small "
                 "line range. Do not request the entire file."
             ),
-            file_path=str(file_path),
+            file_path=path_label,
         )
 
     span_limited = False
@@ -357,25 +371,36 @@ def read_file(file_path, line_start=None, line_end=None):
         span_limited = True
 
     try:
-        with open(resolved, "r", encoding="utf-8") as file:
+        with open_text_under_root(
+            resolved,
+            root=PROJECT_ROOT,
+            encoding="utf-8",
+            errors="strict",
+        ) as file:
             lines = file.readlines()
     except FileNotFoundError:
         return _error(
             "FILE_NOT_FOUND",
             "The requested file does not exist.",
-            file_path=str(file_path),
+            file_path=path_label,
         )
-    except OSError as e:
+    except PermissionError:
+        return _error(
+            ERROR_PATH_DENIED,
+            "Access to this path is denied.",
+            file_path=path_label,
+        )
+    except OSError:
         return _error(
             "READ_ERROR",
-            f"Error reading file: {e}",
-            file_path=str(file_path),
+            "Error reading file.",
+            file_path=path_label,
         )
 
     if len(lines) == 0:
         return {
             "success": True,
-            "file_path": str(file_path),
+            "file_path": path_label,
             "empty": True,
             "line_start": 1,
             "line_end": 0,
@@ -395,7 +420,7 @@ def read_file(file_path, line_start=None, line_end=None):
                 f"line_start ({line_start}) is beyond the end of the file "
                 f"({len(lines)} lines)."
             ),
-            file_path=str(file_path),
+            file_path=path_label,
             file_line_count=len(lines),
         )
 
@@ -527,7 +552,7 @@ def read_file(file_path, line_start=None, line_end=None):
 
     metadata = {
         "success": True,
-        "file_path": str(file_path),
+        "file_path": path_label,
         "line_start": actual_start,
         "line_end": actual_end,
         "lines_read": included,
@@ -551,7 +576,7 @@ def read_file(file_path, line_start=None, line_end=None):
     if needs_continuation:
         suggested_end = min(next_unread + MAX_LINE_SPAN - 1, len(lines))
         metadata["continuation"] = {
-            "file_path": str(file_path),
+            "file_path": path_label,
             "next_line": next_unread,
             "suggested_end_line": suggested_end,
             "message": (

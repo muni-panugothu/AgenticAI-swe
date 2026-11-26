@@ -102,6 +102,52 @@ class TestIntentRouting(unittest.TestCase):
             orch.INTENT_CURRENT,
         )
 
+    def test_natural_preference_recall_routes_to_personal_memory(self):
+        for message in (
+            "retrieve my saved preferences",
+            "retrieve my previously saved preferences",
+            "what are my preferences",
+            "what preferences do I have?",
+            "show my preferences",
+            "which programming language do I prefer?",
+        ):
+            with self.subTest(message=message):
+                intent = orch.classify_intent(message)
+                self.assertEqual(intent, orch.INTENT_MEMORY)
+                self.assertTrue(orch.intent_needs_long_term_memory(intent, message))
+
+        # Personal recall routing must not capture repository inspection.
+        self.assertEqual(
+            orch.classify_intent("Find my agent loop implementation"),
+            orch.INTENT_CODEBASE,
+        )
+
+
+class TestAuthenticatedMemoryRetrieval(unittest.TestCase):
+    def test_memory_search_uses_each_authenticated_identity_and_tenant(self):
+        results = {
+            "usr_account_a": [{"memory": "A preference", "status": "active"}],
+            "usr_account_b": [{"memory": "B preference", "status": "active"}],
+        }
+
+        def search(user_id, query, **kwargs):
+            return {"success": True, "memories": results[user_id], "conflicts": [], "summaries": []}
+
+        with patch.object(chatbot, "semantic_search_memories", side_effect=search) as mocked:
+            account_a = chatbot.load_long_term_memory(
+                "usr_account_a", "What are my preferences?", tenant_id="ten_a"
+            )
+            account_b = chatbot.load_long_term_memory(
+                "usr_account_b", "What are my preferences?", tenant_id="ten_b"
+            )
+
+        self.assertEqual(account_a["memories"][0]["memory"], "A preference")
+        self.assertEqual(account_b["memories"][0]["memory"], "B preference")
+        self.assertEqual(mocked.call_args_list[0].kwargs["user_id"], "usr_account_a")
+        self.assertEqual(mocked.call_args_list[0].kwargs["tenant_id"], "ten_a")
+        self.assertEqual(mocked.call_args_list[1].kwargs["user_id"], "usr_account_b")
+        self.assertEqual(mocked.call_args_list[1].kwargs["tenant_id"], "ten_b")
+
     def test_conceptual_agent_memory_topics_are_technical_no_tools(self):
         """Agent LTM concepts stay tool-free; not personal-memory lookup."""
         msg = (
@@ -1669,6 +1715,11 @@ class TestBlockedToolHelpers(unittest.TestCase):
         self.assertNotIn("```", cleaned)
         self.assertIn("incomplete code example was omitted", cleaned.lower())
 
+    def test_final_answer_validation_does_not_clip_complete_long_prose(self):
+        answer = ("Complete answer paragraph. " * 180).strip()
+        self.assertGreater(len(answer), 2800)
+        self.assertEqual(orch.validate_final_answer_text(answer), answer)
+
     def test_finalization_messages_require_grounding(self):
         msgs = orch.build_finalization_messages(
             user_message="Explain execute_tool",
@@ -1706,6 +1757,36 @@ class TestBlockedToolHelpers(unittest.TestCase):
         self.assertTrue(
             orch.intent_needs_long_term_memory(
                 orch.INTENT_TECHNICAL, "What is my project?"
+            )
+        )
+        self.assertTrue(
+            orch.intent_needs_long_term_memory(
+                orch.INTENT_TECHNICAL,
+                "What programming language did I ask you to remember?",
+            )
+        )
+        self.assertTrue(
+            orch.intent_needs_long_term_memory(
+                orch.INTENT_GENERAL,
+                "Did I tell you my preferred database is MongoDB?",
+            )
+        )
+        self.assertTrue(
+            orch.intent_needs_long_term_memory(
+                orch.INTENT_TECHNICAL,
+                "Which programming language do I prefer?",
+            )
+        )
+        self.assertTrue(
+            orch.intent_needs_long_term_memory(
+                orch.INTENT_TECHNICAL,
+                "What project am I working on?",
+            )
+        )
+        self.assertFalse(
+            orch.intent_needs_long_term_memory(
+                orch.INTENT_TECHNICAL,
+                "How do I choose a programming language for a project?",
             )
         )
 
@@ -1797,18 +1878,40 @@ class TestInvestigationCompleteness(unittest.TestCase):
             "Inspect classify_intent and classify_groq_rate_limit implementations"
         )
         evidence = orch.new_investigation_evidence_state()
+        import ast
+        from pathlib import Path
+
+        def _span(name: str) -> tuple[int, int]:
+            path = Path("app/services/agent_orchestration.py")
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in tree.body:
+                if (
+                    isinstance(
+                        node,
+                        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                    )
+                    and node.name == name
+                ):
+                    return int(node.lineno), int(
+                        getattr(node, "end_lineno", None) or node.lineno
+                    )
+            raise AssertionError(name)
+
+        intent_start, intent_end = _span("classify_intent")
+        groq_start, groq_end = _span("classify_groq_rate_limit")
+        path = "app/services/agent_orchestration.py"
         orch.register_search_discoveries(
             evidence,
             req,
             [
                 {
-                    "file_path": "app/services/agent_orchestration.py",
-                    "line": 200,
+                    "file_path": path,
+                    "line": intent_start,
                     "text": "def classify_intent(user_message):",
                 },
                 {
-                    "file_path": "app/services/agent_orchestration.py",
-                    "line": 515,
+                    "file_path": path,
+                    "line": groq_start,
                     "text": "def classify_groq_rate_limit(exc):",
                 },
             ],
@@ -1816,21 +1919,22 @@ class TestInvestigationCompleteness(unittest.TestCase):
         orch.register_read_verification(
             evidence,
             req,
-            file_path="app/services/agent_orchestration.py",
-            line_start=200,
-            line_end=260,
+            file_path=path,
+            line_start=intent_start,
+            line_end=intent_end,
             content=(
                 "def classify_intent(user_message):\n"
                 "    if educational:\n"
                 "        return INTENT_TECHNICAL\n"
             ),
+            function_complete=True,
         )
         orch.register_read_verification(
             evidence,
             req,
-            file_path="app/services/agent_orchestration.py",
-            line_start=515,
-            line_end=560,
+            file_path=path,
+            line_start=groq_start,
+            line_end=groq_end,
             content=(
                 "def classify_groq_rate_limit(exc):\n"
                 "    if 'tpd' in text: return 'tpd'\n"
@@ -1838,6 +1942,7 @@ class TestInvestigationCompleteness(unittest.TestCase):
                 "    if 'rpm' in text: return 'rpm'\n"
                 "    if 'rpd' in text: return 'rpd'\n"
             ),
+            function_complete=True,
         )
         self.assertIn("classify_intent", evidence["verified_targets"])
         self.assertIn(

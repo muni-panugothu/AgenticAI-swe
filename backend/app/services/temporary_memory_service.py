@@ -1,4 +1,5 @@
 
+import atexit
 import os
 import json
 from uuid import uuid4
@@ -9,6 +10,7 @@ from upstash_redis import Redis
 load_dotenv()
 
 redis = Redis.from_env()
+atexit.register(redis.close)
 
 TTL_SECONDS = {
     "temporary": 300,       # 5 minutes

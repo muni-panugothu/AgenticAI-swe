@@ -113,6 +113,25 @@ class TestCrossTenantProjectIsolation(unittest.TestCase):
             )
         )
 
+    def test_tenantless_legacy_row_is_allowed_for_its_private_owner_only(self):
+        legacy = _doc(user_id="alice", tenant_id=None)
+        self.assertTrue(
+            check_read_permission(
+                "alice", legacy, tenant_id="org1", audit=False
+            )["allowed"]
+        )
+        self.assertFalse(
+            check_read_permission(
+                "bob", legacy, tenant_id="org1", audit=False
+            )["allowed"]
+        )
+        wrong_tenant = _doc(user_id="alice", tenant_id="org2")
+        self.assertFalse(
+            check_read_permission(
+                "alice", wrong_tenant, tenant_id="org1", audit=False
+            )["allowed"]
+        )
+
 
 class TestMissingOwnershipNeverPublic(unittest.TestCase):
     def test_missing_ownership_does_not_grant_public_access(self):
@@ -251,6 +270,64 @@ class TestSemanticRetrievalPermissions(unittest.TestCase):
         self.assertTrue(any("MongoDB" in t for t in texts))
         self.assertFalse(any("bob secret" in t for t in texts))
         self.assertFalse(any("unowned" in t for t in texts))
+
+    def test_semantic_search_includes_owned_legacy_rows_but_rejects_other_tenants(self):
+        legacy = {
+            "memory_id": "legacy-owned",
+            "user_id": "alice",
+            "owner_id": "alice",
+            "memory": "My preferred language is Python",
+            "score": 0.95,
+            "status": "active",
+            "fact_key": "preferred_language",
+            "normalized_value": "python",
+            "importance": 4,
+            "confidence": 0.9,
+            "permission_level": "private",
+            "shared_with": [],
+            "tenant_id": None,
+        }
+        wrong_tenant = dict(legacy)
+        wrong_tenant.update(
+            memory_id="wrong-tenant",
+            memory="Other tenant secret",
+            tenant_id="org2",
+        )
+
+        def fake_vector(user_id, embedding, *, status_filter, limit, min_score, **_):
+            return [legacy, wrong_tenant] if status_filter != {"status": "needs_review"} else []
+
+        with patch(
+            "app.services.memory_service.create_embedding",
+            return_value=[0.1] * 8,
+        ), patch(
+            "app.services.memory_service._vector_search_memories",
+            side_effect=fake_vector,
+        ), patch(
+            "app.services.memory_service.find_memories_by_fact_key",
+            return_value={"success": True, "memories": []},
+        ), patch(
+            "app.services.memory_service.annotate_memories_with_lifecycle",
+            side_effect=lambda xs: xs,
+        ), patch(
+            "app.services.memory_service._record_memory_access",
+        ), patch(
+            "app.services.memory_service.record_audit_event",
+        ), patch(
+            "app.services.memory_service.search_memory_summaries",
+            return_value={"success": True, "summaries": []},
+        ), patch("app.services.memory_service.memory_collection") as mock_coll:
+            mock_coll.find.return_value.limit.return_value = []
+            result = semantic_search_memories(
+                "alice",
+                "What is my preferred language?",
+                tenant_id="org1",
+                include_needs_review=False,
+            )
+
+        texts = [row["memory"] for row in result["memories"]]
+        self.assertIn("My preferred language is Python", texts)
+        self.assertNotIn("Other tenant secret", texts)
 
 
 class TestExistingMemoryOpsRemainFunctional(unittest.TestCase):

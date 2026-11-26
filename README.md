@@ -37,3 +37,12 @@ python -m unittest discover -s tests -p "test_*.py" -v
 python tests/test_stage17_mongodb_transaction_fixed.py
 python tests/test_stage18_mongodb_lifecycle.py
 ```
+
+## Document RAG
+
+Topics 22–32 are implemented in the authenticated backend. The current RAG
+ingestion scope is UTF-8 text and Markdown; see
+[`backend/docs/RAG_IMPLEMENTATION.md`](backend/docs/RAG_IMPLEMENTATION.md) for
+the verified Atlas index configuration, permissions, limits, API behavior,
+and evaluation/test commands. RAG uses a separate 768-dimensional vector
+configuration and does not change personal-memory vectors or indexes.

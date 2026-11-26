@@ -3,7 +3,28 @@ import {
   buildApiUrl,
   getConnectionHelpMessage,
 } from './apiClient';
+import {
+  formatApiError,
+  normalizeCitations,
+  normalizeDocumentList,
+  normalizeUploadResponse,
+} from './apiNormalize';
 import { fetchWithAuth } from './authorizedFetch';
+import { getAuthHeaders } from './authStorage';
+import { refreshAccessToken } from './authApi';
+import {
+  StreamCancelledError,
+  StreamDeliveryError,
+  StreamTransportUnavailableError,
+  streamChatOnce,
+  type StreamTransportKind,
+} from './streamChatOnce';
+
+export {
+  StreamCancelledError,
+  StreamDeliveryError,
+  StreamTransportUnavailableError,
+};
 
 export interface ChatHistoryItem {
   role: 'user' | 'assistant';
@@ -61,6 +82,11 @@ export type StreamEvent =
       model?: string;
       provider?: string;
       citations?: Citation[];
+    }
+  | {
+      type: 'error';
+      error: string;
+      code?: string;
     };
 
 export interface UploadResponse {
@@ -91,38 +117,64 @@ function classifyClientError(err: unknown): Error {
   return new Error(`fetch failed: ${detail}`);
 }
 
-interface ServerErrorBody {
-  error?: string;
-  code?: string;
-  destination?: string;
+function normalizeChatResponse(raw: Record<string, unknown>): ChatResponse {
+  return {
+    reply: String(raw.reply ?? ''),
+    sessionId:
+      typeof raw.sessionId === 'string'
+        ? raw.sessionId
+        : typeof raw.session_id === 'string'
+          ? raw.session_id
+          : undefined,
+    action: String(raw.action ?? 'general'),
+    contextUsed: Boolean(raw.contextUsed ?? raw.context_used),
+    ragSkipped:
+      raw.ragSkipped !== undefined || raw.rag_skipped !== undefined
+        ? Boolean(raw.ragSkipped ?? raw.rag_skipped)
+        : undefined,
+    citations: normalizeCitations(raw.citations),
+    model: String(raw.model ?? 'unknown'),
+    provider:
+      typeof raw.provider === 'string' ? raw.provider : undefined,
+    routingReason:
+      typeof raw.routingReason === 'string'
+        ? raw.routingReason
+        : typeof raw.routing_reason === 'string'
+          ? raw.routing_reason
+          : undefined,
+    usage:
+      raw.usage && typeof raw.usage === 'object'
+        ? (raw.usage as ChatResponse['usage'])
+        : undefined,
+    estimatedCostUsd:
+      typeof raw.estimatedCostUsd === 'number'
+        ? raw.estimatedCostUsd
+        : undefined,
+    inputTokensEstimate:
+      typeof raw.inputTokensEstimate === 'number'
+        ? raw.inputTokensEstimate
+        : undefined,
+  };
 }
 
-function formatServerError(status: number, body: ServerErrorBody): string {
-  const code = body.code ?? '';
-  const dest = body.destination ? ` (→ ${body.destination})` : '';
-
-  switch (code) {
-    case 'AI_PROVIDER_ERROR':
-      return `AI provider failed${dest}: ${body.error ?? 'unknown'}`;
-    case 'AI_PROVIDER_AUTH':
-      return 'AI provider authentication failed — check your API key in server/.env';
-    case 'AI_PROVIDER_RATE_LIMIT':
-      return 'AI provider rate limited — wait a moment and try again';
-    case 'RAG_UNAVAILABLE':
-      return `RAG service unavailable${dest}: ${body.error ?? 'Qdrant not running'}`;
-    case 'MONGODB_ERROR':
-      return `Database error: ${body.error ?? 'MongoDB unavailable'}`;
-    default:
-      return body.error ?? `Server error (HTTP ${status})`;
-  }
-}
-
-async function parseJson<T>(res: Response): Promise<T> {
+async function parseJsonResponse(res: Response): Promise<Record<string, unknown>> {
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText } as ServerErrorBody));
-    throw new Error(formatServerError(res.status, body as ServerErrorBody));
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(formatApiError(res.status, body, res.statusText));
   }
-  return res.json() as Promise<T>;
+  return (await res.json()) as Record<string, unknown>;
+}
+
+async function authHeadersForUpload(): Promise<Record<string, string>> {
+  let headers = await getAuthHeaders();
+  if (!headers.Authorization) {
+    const renewed = await refreshAccessToken();
+    if (!renewed) {
+      throw new Error('Session expired — please sign in again');
+    }
+    headers = await getAuthHeaders();
+  }
+  return headers;
 }
 
 export async function sendChatMessage(
@@ -151,101 +203,147 @@ export async function sendChatMessage(
         preferModel: options?.preferModel,
       }),
     });
-    return parseJson<ChatResponse>(res);
+    return normalizeChatResponse(await parseJsonResponse(res));
   } catch (err) {
     throw classifyClientError(err);
   }
 }
 
+type StreamHandlers = {
+  action?: string;
+  useRag?: boolean;
+  sessionId?: string;
+  preferProvider?: 'groq' | 'openai';
+  preferModel?: string;
+  signal?: AbortSignal;
+  onToken: (token: string, fullText: string) => void;
+  onMeta?: (meta: Extract<StreamEvent, { type: 'meta' }>) => void;
+  onDone?: (done: Extract<StreamEvent, { type: 'done' }>) => void;
+  /** Selected streaming transport (never json-fallback). */
+  onTransport?: (transport: StreamTransportKind) => void;
+};
+
+function buildChatBody(
+  message: string,
+  history: ChatHistoryItem[],
+  options: StreamHandlers
+) {
+  return JSON.stringify({
+    message,
+    history,
+    action: options.action,
+    useRag: options.useRag ?? true,
+    sessionId: options.sessionId,
+    preferProvider: options.preferProvider,
+    preferModel: options.preferModel,
+  });
+}
+
+async function authHeadersForStream(): Promise<Record<string, string>> {
+  let headers = await getAuthHeaders();
+  if (!headers.Authorization) {
+    const renewed = await refreshAccessToken();
+    if (!renewed) {
+      throw new Error('Session expired — please sign in again');
+    }
+    headers = await getAuthHeaders();
+  }
+  return headers;
+}
+
 /**
  * Stream chat tokens via SSE from POST /api/chat/stream.
- * Falls back to blocking sendChatMessage if the response body is not readable.
+ *
+ * Batch A: select one transport *before* POST; never auto-fallback to XHR or
+ * JSON after a streaming request may have been accepted. Empty token buffers
+ * do not authorize retries.
  */
 export async function streamChatMessage(
   message: string,
   history: ChatHistoryItem[] = [],
-  options: {
-    action?: string;
-    useRag?: boolean;
-    sessionId?: string;
-    onToken: (token: string, fullText: string) => void;
-    onMeta?: (meta: Extract<StreamEvent, { type: 'meta' }>) => void;
-    onDone?: (done: Extract<StreamEvent, { type: 'done' }>) => void;
-  }
+  options: StreamHandlers
 ): Promise<ChatResponse> {
   await ensureConnected();
+  const url = buildApiUrl('/api/chat/stream');
+  const body = buildChatBody(message, history, options);
 
-  const res = await fetchWithAuth('/api/chat/stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify({
-      message,
-      history,
-      action: options.action,
-      useRag: options.useRag ?? true,
-      sessionId: options.sessionId,
-    }),
-  });
+  try {
+    const headers = await authHeadersForStream();
+    const result = await streamChatOnce({
+      url,
+      body,
+      headers,
+      handlers: {
+        signal: options.signal,
+        onToken: options.onToken,
+        onMeta: (meta) => {
+          options.onMeta?.({
+            type: 'meta',
+            sessionId: meta.sessionId,
+            action: meta.action,
+            contextUsed: meta.contextUsed,
+            ragSkipped: meta.ragSkipped,
+            model: meta.model,
+            provider: meta.provider,
+            routingReason: meta.routingReason,
+            inputTokensEstimate: meta.inputTokensEstimate,
+            citations: normalizeCitations(meta.citations),
+          });
+        },
+        onDone: (done) => {
+          options.onDone?.({
+            type: 'done',
+            sessionId: done.sessionId,
+            usage: done.usage as ChatResponse['usage'],
+            estimatedCostUsd: done.estimatedCostUsd,
+            model: done.model,
+            provider: done.provider,
+            citations: normalizeCitations(done.citations),
+          });
+        },
+        onTransport: options.onTransport,
+      },
+      refreshAuth: async () => {
+        const renewed = await refreshAccessToken();
+        if (!renewed) return null;
+        return getAuthHeaders();
+      },
+      deps: {
+        log: (msg, detail) => {
+          if (__DEV__) {
+            console.log(`[chat] ${msg}`, detail ?? '');
+          }
+        },
+      },
+    });
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(formatServerError(res.status, body as ServerErrorBody));
-  }
-
-  const reader = res.body?.getReader?.();
-  if (!reader) {
-    return sendChatMessage(message, history, options);
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let fullText = '';
-  let meta: Extract<StreamEvent, { type: 'meta' }> | undefined;
-  let doneEvt: Extract<StreamEvent, { type: 'done' }> | undefined;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split('\n\n');
-    buffer = parts.pop() ?? '';
-
-    for (const part of parts) {
-      const line = part.trim();
-      if (!line.startsWith('data:')) continue;
-      const json = line.slice(5).trim();
-      if (!json) continue;
-      const evt = JSON.parse(json) as StreamEvent;
-      if (evt.type === 'meta') {
-        meta = evt;
-        options.onMeta?.(evt);
-      } else if (evt.type === 'token') {
-        fullText += evt.token;
-        options.onToken(evt.token, fullText);
-      } else if (evt.type === 'done') {
-        doneEvt = evt;
-        options.onDone?.(evt);
-      }
+    return normalizeChatResponse({
+      reply: result.fullText,
+      sessionId: result.done?.sessionId ?? result.meta?.sessionId,
+      action: result.meta?.action ?? 'general',
+      contextUsed: result.meta?.contextUsed ?? false,
+      ragSkipped: result.meta?.ragSkipped,
+      model: result.done?.model ?? result.meta?.model ?? 'unknown',
+      provider: result.done?.provider ?? result.meta?.provider,
+      routingReason: result.meta?.routingReason,
+      usage: result.done?.usage as ChatResponse['usage'],
+      estimatedCostUsd: result.done?.estimatedCostUsd,
+      inputTokensEstimate: result.meta?.inputTokensEstimate,
+      citations: normalizeCitations(
+        result.done?.citations ?? result.meta?.citations
+      ),
+    });
+  } catch (err) {
+    if (err instanceof StreamCancelledError) throw err;
+    if (err instanceof StreamTransportUnavailableError) {
+      throw classifyClientError(err);
     }
+    if (err instanceof StreamDeliveryError) {
+      // Partial text already pushed via onToken — surface delivery error only.
+      throw err;
+    }
+    throw classifyClientError(err);
   }
-
-  return {
-    reply: fullText,
-    sessionId: doneEvt?.sessionId ?? meta?.sessionId,
-    action: meta?.action ?? 'general',
-    contextUsed: meta?.contextUsed ?? false,
-    ragSkipped: meta?.ragSkipped,
-    model: doneEvt?.model ?? meta?.model ?? 'unknown',
-    provider: doneEvt?.provider ?? meta?.provider,
-    routingReason: meta?.routingReason,
-    usage: doneEvt?.usage,
-    estimatedCostUsd: doneEvt?.estimatedCostUsd,
-    inputTokensEstimate: meta?.inputTokensEstimate,
-    citations: doneEvt?.citations ?? meta?.citations,
-  };
 }
 
 export async function sendActionMessage(
@@ -259,9 +357,14 @@ export async function sendActionMessage(
     const res = await fetchWithAuth(`/api/chat/action/${actionId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history, sessionId }),
+      body: JSON.stringify({
+        message: message && message.trim() ? message : 'Continue',
+        history,
+        sessionId,
+        action: actionId,
+      }),
     });
-    return parseJson<ChatResponse>(res);
+    return normalizeChatResponse(await parseJsonResponse(res));
   } catch (err) {
     throw classifyClientError(err);
   }
@@ -281,13 +384,59 @@ function guessMimeType(filename: string, mimeType?: string | null): string {
 /**
  * Upload a local file via expo-file-system native multipart upload.
  *
- * Expo SDK 57 replaces global fetch with WinterCG fetch, which rejects the
- * classic React Native FormData descriptor `{ uri, name, type }` and throws:
- *   "Unsupported FormDataPart implementation"
- * (see expo/src/winter/fetch/convertFormData.ts).
- *
- * Using File.upload(UploadType.MULTIPART) avoids that path entirely.
+ * Expo SDK 57 WinterCG fetch rejects classic RN FormData `{ uri, name, type }`.
+ * File.upload(UploadType.MULTIPART) is the supported path. Authorization must
+ * be attached explicitly — uploads do not go through fetchWithAuth.
  */
+async function multipartUploadFile(
+  file: InstanceType<typeof import('expo-file-system').File>,
+  url: string,
+  resolvedMime: string
+): Promise<UploadResponse> {
+  const { UploadType } = await import('expo-file-system');
+  const headers = await authHeadersForUpload();
+
+  const run = async (auth: Record<string, string>) =>
+    file.upload(url, {
+      httpMethod: 'POST',
+      uploadType: UploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: resolvedMime,
+      headers: auth,
+    });
+
+  let result = await run(headers);
+  if (result.status === 401) {
+    const renewed = await refreshAccessToken();
+    if (!renewed) {
+      throw new Error('Session expired — please sign in again');
+    }
+    result = await run(await getAuthHeaders());
+  }
+
+  if (result.status < 200 || result.status >= 300) {
+    let body: unknown = {};
+    try {
+      body = JSON.parse(result.body);
+    } catch {
+      body = { error: result.body || `HTTP ${result.status}` };
+    }
+    throw new Error(formatApiError(result.status, body, `HTTP ${result.status}`));
+  }
+
+  let parsed: unknown = {};
+  try {
+    parsed = JSON.parse(result.body);
+  } catch {
+    throw new Error('Upload failed: invalid server response');
+  }
+  const normalized = normalizeUploadResponse(parsed);
+  if (!normalized.documentId) {
+    throw new Error('Upload failed: server did not return document_id');
+  }
+  return normalized;
+}
+
 export async function uploadDocument(
   uri: string,
   name: string,
@@ -303,7 +452,7 @@ export async function uploadDocument(
   }
 
   try {
-    const { File, UploadType } = await import('expo-file-system');
+    const { File } = await import('expo-file-system');
     const file = new File(uri);
 
     if (__DEV__) {
@@ -316,42 +465,31 @@ export async function uploadDocument(
       );
     }
 
-    const result = await file.upload(url, {
-      httpMethod: 'POST',
-      uploadType: UploadType.MULTIPART,
-      fieldName: 'file',
-      mimeType: resolvedMime,
-      parameters: { strategy: 'recursive' },
-    });
-
+    const normalized = await multipartUploadFile(file, url, resolvedMime);
     if (__DEV__) {
-      console.log('[upload] response status:', result.status);
+      console.log(
+        '[upload] upload completed:',
+        normalized.documentId,
+        normalized.chunkCount
+      );
     }
-
-    if (result.status < 200 || result.status >= 300) {
-      let body: ServerErrorBody = {};
-      try {
-        body = JSON.parse(result.body) as ServerErrorBody;
-      } catch {
-        body = { error: result.body || `HTTP ${result.status}` };
-      }
-      throw new Error(formatServerError(result.status, body));
-    }
-
-    const parsed = JSON.parse(result.body) as UploadResponse;
-    if (__DEV__) {
-      console.log('[upload] upload completed:', parsed.documentId, parsed.chunkCount);
-    }
-    return parsed;
+    return {
+      ...normalized,
+      filename: normalized.filename || name,
+    };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
 
     if (
       detail.startsWith('AI provider') ||
       detail.startsWith('RAG service') ||
+      detail.startsWith('Document rejected') ||
       detail.startsWith('Database error') ||
       detail.startsWith('Server error') ||
-      detail.startsWith('Upload failed')
+      detail.startsWith('Upload failed') ||
+      detail.startsWith('Rate limit') ||
+      detail.includes('rate limit') ||
+      detail.includes('Session expired')
     ) {
       throw err instanceof Error ? err : new Error(detail);
     }
@@ -376,18 +514,39 @@ export async function uploadDocument(
   }
 }
 
+/**
+ * Paste-to-ingest: backend `/api/documents/ingest` expects multipart `file`,
+ * not JSON `{ text }`. Write a temp .txt and reuse the authenticated uploader.
+ */
 export async function ingestDocument(
   text: string,
-  strategy = 'recursive'
-): Promise<{ documentId: string; chunkCount: number }> {
+  _strategy = 'recursive'
+): Promise<{ documentId: string; chunkCount: number; filename: string }> {
   await ensureConnected();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error('Paste text is empty');
+  }
+
   try {
-    const res = await fetch(buildApiUrl('/api/documents/ingest'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, strategy }),
-    });
-    return parseJson(res);
+    const { File, Paths } = await import('expo-file-system');
+    const filename = `pasted-${Date.now()}.txt`;
+    const file = new File(Paths.cache, filename);
+    file.create();
+    file.write(trimmed);
+
+    const url = buildApiUrl('/api/documents/ingest');
+    const normalized = await multipartUploadFile(file, url, 'text/plain');
+    try {
+      file.delete();
+    } catch {
+      // Best-effort cache cleanup.
+    }
+    return {
+      documentId: normalized.documentId,
+      chunkCount: normalized.chunkCount,
+      filename: normalized.filename || filename,
+    };
   } catch (err) {
     throw classifyClientError(err);
   }
@@ -403,12 +562,12 @@ export interface DocumentListItem {
 export async function listDocuments(): Promise<DocumentListItem[]> {
   await ensureConnected();
   try {
-    const res = await fetch(buildApiUrl('/api/documents'), {
+    const res = await fetchWithAuth('/api/documents', {
       method: 'GET',
       headers: { Accept: 'application/json' },
     });
-    const body = await parseJson<{ documents: DocumentListItem[] }>(res);
-    return body.documents ?? [];
+    const body = await parseJsonResponse(res);
+    return normalizeDocumentList(body);
   } catch (err) {
     throw classifyClientError(err);
   }

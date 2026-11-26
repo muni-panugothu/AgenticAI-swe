@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app.services import agent_orchestration as orch
@@ -20,6 +22,20 @@ from pydantic import ValidationError
 from app import chatbot
 
 
+def _top_level_def_span(rel_path: str, name: str) -> tuple[int, int]:
+    """Inclusive (start, end) line span for a module-level def/class."""
+    path = Path(fr.PROJECT_ROOT) / rel_path
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.name == name
+        ):
+            end = getattr(node, "end_lineno", None) or node.lineno
+            return int(node.lineno), int(end)
+    raise AssertionError(f"{name!r} not found in {rel_path}")
+
+
 class TestContinuationVerification(unittest.TestCase):
     def test_continuation_window_still_verifies_after_def_seen(self):
         """Body-only continuation must not leave the symbol permanently unread."""
@@ -27,22 +43,27 @@ class TestContinuationVerification(unittest.TestCase):
             "Inspect classify_intent. Read the complete implementation."
         )
         evidence = orch.new_investigation_evidence_state()
+        def_start, def_end = _top_level_def_span(
+            "app/services/agent_orchestration.py", "classify_intent"
+        )
+        path = "app/services/agent_orchestration.py"
         orch.register_search_discoveries(
             evidence,
             req,
             [{
-                "file_path": "app/services/agent_orchestration.py",
-                "line": 214,
+                "file_path": path,
+                "line": def_start,
                 "text": "def classify_intent(user_message):",
             }],
         )
-        # First window includes the def.
+        # First window includes the def but not the full body.
+        partial_end = min(def_start + 35, def_end - 1)
         orch.register_read_verification(
             evidence,
             req,
-            file_path="app/services/agent_orchestration.py",
-            line_start=275,
-            line_end=310,
+            file_path=path,
+            line_start=def_start,
+            line_end=partial_end,
             content=(
                 "def classify_intent(user_message: str) -> str:\n"
                 "    lowered = user_message.lower()\n"
@@ -58,33 +79,38 @@ class TestContinuationVerification(unittest.TestCase):
             "Inspect classify_intent. Read the complete implementation."
         )
         evidence = orch.new_investigation_evidence_state()
+        def_start, def_end = _top_level_def_span(
+            "app/services/agent_orchestration.py", "classify_intent"
+        )
+        path = "app/services/agent_orchestration.py"
         orch.register_search_discoveries(
             evidence,
             req,
             [{
-                "file_path": "app/services/agent_orchestration.py",
-                "line": 214,
+                "file_path": path,
+                "line": def_start,
                 "text": "def classify_intent(user_message):",
             }],
         )
         # Window A covers the def but we simulate progress without verify edge.
+        window_a_end = def_start + 20
         evidence["read_ranges"].append({
-            "file_path": "app/services/agent_orchestration.py",
-            "line_start": 214,
-            "line_end": 240,
+            "file_path": path,
+            "line_start": def_start,
+            "line_end": window_a_end,
         })
         evidence.setdefault("target_progress", {})["classify_intent"] = {
             "saw_def": True,
             "body": "def classify_intent(user_message: str) -> str:\n    x = 1\n",
-            "file_path": "app/services/agent_orchestration.py",
+            "file_path": path,
         }
-        # Window B is body-only continuation past the def.
+        # Window B is body-only continuation past the def through the end.
         newly = orch.register_read_verification(
             evidence,
             req,
-            file_path="app/services/agent_orchestration.py",
-            line_start=241,
-            line_end=300,
+            file_path=path,
+            line_start=window_a_end + 1,
+            line_end=def_end,
             content=(
                 "    if _targets_user_repo(text):\n"
                 "        return INTENT_CODEBASE\n"
@@ -101,27 +127,46 @@ class TestContinuationVerification(unittest.TestCase):
             "Read the source."
         )
         evidence = orch.new_investigation_evidence_state()
-        # One window covered both current def lines (704 and 743).
+        # One window covers both current definitions — resolve via AST so the
+        # contract survives legitimate source drift.
+        groq_start, groq_end = _top_level_def_span(
+            "app/services/agent_orchestration.py", "classify_groq_rate_limit"
+        )
+        tpm_start, tpm_end = _top_level_def_span(
+            "app/services/agent_orchestration.py", "is_tpm_rate_limit_error"
+        )
+        line_start = min(groq_start, tpm_start)
+        line_end = max(groq_end, tpm_end)
+        path = "app/services/agent_orchestration.py"
         evidence["read_ranges"].append({
-            "file_path": "app/services/agent_orchestration.py",
-            "line_start": 700,
-            "line_end": 750,
+            "file_path": path,
+            "line_start": line_start,
+            "line_end": line_end,
         })
         evidence["read_snippets"].append(
-            "read_file app/services/agent_orchestration.py:700-750: "
+            f"read_file {path}:{line_start}-{line_end}: "
             "def classify_groq_rate_limit(exc):\n    return 'tpm'\n"
             "def is_tpm_rate_limit_error(exc):\n    return True\n"
         )
         evidence.setdefault("target_progress", {})["classify_groq_rate_limit"] = {
             "saw_def": True,
             "body": "def classify_groq_rate_limit(exc):\n    return 'tpm'\n",
-            "file_path": "app/services/agent_orchestration.py",
+            "file_path": path,
         }
         evidence.setdefault("target_progress", {})["is_tpm_rate_limit_error"] = {
             "saw_def": True,
             "body": "def is_tpm_rate_limit_error(exc):\n    return True\n",
-            "file_path": "app/services/agent_orchestration.py",
+            "file_path": path,
         }
+        # Hints must point at the same defs the covering window includes.
+        self.assertEqual(
+            orch.KNOWN_SYMBOL_LOCATIONS["classify_groq_rate_limit"][1],
+            groq_start,
+        )
+        self.assertEqual(
+            orch.KNOWN_SYMBOL_LOCATIONS["is_tpm_rate_limit_error"][1],
+            tpm_start,
+        )
         newly = orch.reconcile_covered_but_unverified(evidence, req)
         self.assertIn("classify_groq_rate_limit", newly)
         self.assertIn("is_tpm_rate_limit_error", newly)
@@ -259,15 +304,28 @@ class TestInvestigationBudgetManager(unittest.TestCase):
 
 class TestAstFunctionBoundary(unittest.TestCase):
     def test_ast_span_for_classify_intent(self):
+        """Probe a line inside classify_intent — not a brittle absolute line."""
+        def_start, def_end = _top_level_def_span(
+            "app/services/agent_orchestration.py", "classify_intent"
+        )
+        probe = def_start + min(5, max(0, def_end - def_start))
         path = (
             fr.PROJECT_ROOT / "app" / "services" / "agent_orchestration.py"
         )
         text = path.read_text(encoding="utf-8")
-        span = fr.ast_enclosing_symbol_span(text, 214)
+        span = fr.ast_enclosing_symbol_span(text, probe)
         self.assertIsNotNone(span)
         start, end = span
-        self.assertLessEqual(start, 214)
+        self.assertEqual(start, def_start)
+        self.assertEqual(end, def_end)
+        self.assertLessEqual(start, probe)
+        self.assertGreaterEqual(end, probe)
         self.assertGreater(end, start)
+        # Classification behavior must remain intact at the resolved symbol.
+        self.assertEqual(
+            orch.classify_intent("Calculate 12 * 8"),
+            orch.INTENT_CALC,
+        )
 
     def test_long_function_continuation_uses_next_line(self):
         # First window of a long function must ask for exact next_line.
@@ -710,12 +768,15 @@ class TestVerifiedVsPartialReport(unittest.TestCase):
             "Inspect classify_intent. Read the source."
         )
         evidence = orch.new_investigation_evidence_state()
+        intent_start, intent_end = _top_level_def_span(
+            "app/services/agent_orchestration.py", "classify_intent"
+        )
         orch.register_read_verification(
             evidence,
             req,
             file_path="app/services/agent_orchestration.py",
-            line_start=275,
-            line_end=360,
+            line_start=intent_start,
+            line_end=intent_end,
             content="def classify_intent(user_message):\n    return 'x'\n",
             function_complete=True,
         )
@@ -743,21 +804,28 @@ class TestVerifiedVsPartialReport(unittest.TestCase):
             "Inspect classify_intent and classify_groq_rate_limit. Read source."
         )
         evidence = orch.new_investigation_evidence_state()
+        intent_start, intent_end = _top_level_def_span(
+            "app/services/agent_orchestration.py", "classify_intent"
+        )
+        groq_start, groq_end = _top_level_def_span(
+            "app/services/agent_orchestration.py", "classify_groq_rate_limit"
+        )
+        path = "app/services/agent_orchestration.py"
         orch.register_read_verification(
             evidence,
             req,
-            file_path="app/services/agent_orchestration.py",
-            line_start=377,
-            line_end=478,
+            file_path=path,
+            line_start=intent_start,
+            line_end=intent_end,
             content="def classify_intent(user_message):\n    return 'x'\n",
             function_complete=True,
         )
         orch.register_read_verification(
             evidence,
             req,
-            file_path="app/services/agent_orchestration.py",
-            line_start=704,
-            line_end=740,
+            file_path=path,
+            line_start=groq_start,
+            line_end=groq_end,
             content="def classify_groq_rate_limit(exc):\n    return 'tpm'\n",
             function_complete=True,
         )
@@ -1438,31 +1506,29 @@ class TestMemoryArchitectureInvestigation(unittest.TestCase):
         self.assertIn("app/services/memory_lifecycle_service.py", files)
         self.assertIn("app/services/memory_summary_service.py", files)
 
-        # Simulate reading one symbol from each service.
+        # Simulate reading one symbol from each service (AST-resolved spans).
         samples = [
             (
                 "reinforce_memory",
                 "app/services/memory_service.py",
-                2482,
-                2635,
                 "def reinforce_memory(memory_id):\n    return True\n",
             ),
             (
                 "detect_memory_conflict",
                 "app/services/memory_conflict_service.py",
-                578,
-                594,
                 "def detect_memory_conflict(user_id, text):\n    return None\n",
             ),
             (
                 "calculate_memory_freshness_score",
                 "app/services/memory_lifecycle_service.py",
-                32,
-                57,
                 "def calculate_memory_freshness_score(doc):\n    return 1.0\n",
             ),
         ]
-        for tid, path, start, end, body in samples:
+        reinforce_end = None
+        for tid, path, body in samples:
+            start, end = _top_level_def_span(path, tid)
+            if tid == "reinforce_memory":
+                reinforce_end = end
             orch.register_read_verification(
                 evidence,
                 req,
@@ -1487,7 +1553,7 @@ class TestMemoryArchitectureInvestigation(unittest.TestCase):
         )
         self.assertEqual(
             rows["reinforce_memory"]["line_end"],
-            2635,
+            reinforce_end,
         )
 
     def test_pass_requires_source_read_not_import(self):
@@ -1593,8 +1659,8 @@ class TestMemoryArchitectureInvestigation(unittest.TestCase):
             evidence,
             req,
             file_path="app/services/memory_summary_service.py",
-            line_start=1175,
-            line_end=1227,
+            line_start=1240,
+            line_end=1307,
             content=(
                 "def summarize_user_memories(user_id):\n"
                 "    return []\n"
@@ -1612,8 +1678,8 @@ class TestMemoryArchitectureInvestigation(unittest.TestCase):
             evidence,
             req,
             file_path="app/services/memory_service.py",
-            line_start=2482,
-            line_end=2532,
+            line_start=2610,
+            line_end=2660,
             content="def reinforce_memory(memory_id):\n    return True\n",
             function_complete=False,
         )
@@ -1621,16 +1687,16 @@ class TestMemoryArchitectureInvestigation(unittest.TestCase):
             evidence,
             req,
             file_path="app/services/memory_service.py",
-            line_start=3322,
-            line_end=3437,
+            line_start=3485,
+            line_end=3608,
             content="def delete_memory(user_id, memory_id):\n    return True\n",
             function_complete=True,
         )
         reinf = evidence["target_progress"]["reinforce_memory"]
         dele = evidence["target_progress"]["delete_memory"]
-        self.assertLessEqual(int(reinf["line_end"]), 2635)
-        self.assertEqual(int(dele["line_start"]), 3322)
-        self.assertEqual(int(dele["line_end"]), 3437)
+        self.assertLessEqual(int(reinf["line_end"]), 2798)
+        self.assertEqual(int(dele["line_start"]), 3485)
+        self.assertEqual(int(dele["line_end"]), 3608)
         rows = orch.build_evidence_ledger_rows(req, evidence)
         problems = orch.assert_ledger_ranges_match_symbols(rows)
         self.assertEqual(problems, [])

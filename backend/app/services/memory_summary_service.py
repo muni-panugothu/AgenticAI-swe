@@ -641,6 +641,7 @@ def _optional_llm_polish(summary_text: str, memories: list[dict]) -> str | None:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         return None
+    client = None
     try:
         from groq import Groq
 
@@ -678,8 +679,24 @@ def _optional_llm_polish(summary_text: str, memories: list[dict]) -> str | None:
         polished = (response.choices[0].message.content or "").strip()
         return polished or None
     except Exception as exc:
-        print(f"[Summary LLM polish skipped]: {exc}")
+        # Provider exceptions can contain request metadata. Keep logs free of
+        # credentials, headers, and endpoint details.
+        import logging
+
+        logging.getLogger("agentic.memory_summary").warning(
+            "Summary LLM polish skipped (%s)", type(exc).__name__
+        )
         return None
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception as exc:
+                import logging
+
+                logging.getLogger("agentic.memory_summary").warning(
+                    "Summary LLM client close failed (%s)", type(exc).__name__
+                )
 
 
 # ---------------------------------------------------------------
@@ -1126,15 +1143,32 @@ def generate_summary_for_type(
         )
         payload = document.model_dump()
 
-        if active:
-            coll.update_one(
-                {"_id": active["_id"], "user_id": user_id, "status": "active"},
-                {"$set": {"status": "outdated", "updated_at": now}},
-            )
+        from app.services.execution_lifecycle import (
+            commit_rejected_result,
+            finish_commit_abort,
+            finish_commit_success,
+            try_begin_commit,
+        )
 
-        insert_result = coll.insert_one(payload)
+        if not try_begin_commit():
+            return commit_rejected_result()
+
+        try:
+            if active:
+                coll.update_one(
+                    {"_id": active["_id"], "user_id": user_id, "status": "active"},
+                    {"$set": {"status": "outdated", "updated_at": now}},
+                )
+
+            insert_result = coll.insert_one(payload)
+        except Exception:
+            finish_commit_abort()
+            raise
+
         if not insert_result.inserted_id:
+            finish_commit_abort()
             return {"success": False, "error": "Failed to insert summary"}
+        finish_commit_success()
 
         stored = coll.find_one(
             {"_id": insert_result.inserted_id, "user_id": user_id}

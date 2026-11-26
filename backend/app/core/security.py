@@ -31,13 +31,16 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
         return False
 
 
-def create_access_token(*, user_id: str, email: str, tenant_id: str | None = None) -> str:
+def create_access_token(*, user_id: str, email: str, session_id: str, tenant_id: str | None = None) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
         "email": email,
         "type": "access",
+        "sid": session_id,
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
         "iat": int(now.timestamp()),
         "exp": int(
             (now + timedelta(minutes=settings.access_token_ttl_minutes)).timestamp()
@@ -55,10 +58,13 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
             token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            options={"require": ["sub", "email", "type", "sid", "iat", "exp", "iss", "aud"]},
         )
     except jwt.PyJWTError:
         return None
-    if payload.get("type") != "access":
+    if payload.get("type") != "access" or not isinstance(payload.get("sid"), str):
         return None
     return payload
 

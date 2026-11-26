@@ -1,3 +1,4 @@
+import atexit
 import os
 import time
 from datetime import datetime, timezone
@@ -37,6 +38,34 @@ from app.services.memory_scope_service import (
     filter_documents_by_scope,
 )
 from app.utils.memory_logging import log_memory_operation
+
+
+def _begin_durable_commit():
+    """Acquire late-worker commit lease immediately before an irreversible write.
+
+    Returns an error dict when the execution was invalidated by timeout/cancel.
+    When no execution is bound (direct unit tests), commits are allowed.
+    """
+    from app.services.execution_lifecycle import (
+        commit_rejected_result,
+        try_begin_commit,
+    )
+
+    if try_begin_commit():
+        return None
+    return commit_rejected_result()
+
+
+def _finish_durable_commit(*, success: bool) -> None:
+    from app.services.execution_lifecycle import (
+        finish_commit_abort,
+        finish_commit_success,
+    )
+
+    if success:
+        finish_commit_success()
+    else:
+        finish_commit_abort()
 
 
 # ============================================================
@@ -103,6 +132,56 @@ from app.services.memory_summary_service import (  # noqa: E402
 )
 
 configure_summary_collections(summary_collection, memory_collection)
+
+
+def close_mongo_client() -> None:
+    """Close the shared MongoClient (FastAPI shutdown / process exit)."""
+    global client
+    try:
+        if client is not None:
+            client.close()
+    except Exception:
+        pass
+
+
+atexit.register(close_mongo_client)
+
+
+def _memory_log_id(mem: dict) -> str:
+    mid = mem.get("memory_id") or mem.get("_id")
+    return str(mid) if mid is not None else "unknown"
+
+
+def _authorize_memory_candidates(
+    candidates: list[dict],
+    *,
+    user_id: str,
+    tenant_id: str | None = None,
+    project_id: str | None = None,
+) -> list[dict]:
+    """Drop unauthorized rows before ranking, logging, or LLM context."""
+    if not candidates:
+        return []
+    normalized: list[dict] = []
+    for mem in candidates:
+        if not isinstance(mem, dict):
+            continue
+        row = dict(mem)
+        _ensure_identity_fields(row, fallback_user_id=None)
+        normalized.append(row)
+    scoped = filter_documents_by_scope(
+        normalized,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        allow_shared=True,
+    )
+    return filter_readable_documents(
+        scoped,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        project_id=project_id,
+    )
 
 
 def ensure_memory_indexes() -> dict:
@@ -372,8 +451,16 @@ def save_memory(
         )
 
         memory_document = validated_memory.model_dump()
-        result = memory_collection.insert_one(memory_document)
-        memory_id = str(result.inserted_id)
+        blocked = _begin_durable_commit()
+        if blocked is not None:
+            return blocked
+        try:
+            result = memory_collection.insert_one(memory_document)
+            memory_id = str(result.inserted_id)
+            _finish_durable_commit(success=True)
+        except Exception:
+            _finish_durable_commit(success=False)
+            raise
 
         record_audit_event(
             user_id=user_id,
@@ -588,6 +675,16 @@ def find_memories_by_fact_key(
             _doc_to_memory_candidate(item, fallback_user_id=user_id)
             for item in docs
         ]
+        if not memories:
+            memories = _legacy_compound_fact_candidates(
+                user_id=user_id,
+                fact_key=fact_key,
+                statuses=status_list,
+                include_missing_active=include_missing_active,
+                limit=limit,
+                project_id=project_id,
+                tenant_id=tenant_id,
+            )
         memories = filter_readable_documents(
             memories,
             user_id=user_id,
@@ -1738,7 +1835,11 @@ def infer_query_fact_keys(query: str) -> list[str]:
         r"\bwhat is my (?:current )?project\b", q
     ):
         keys.append("primary_project")
-    if _re.search(r"\b(grocery|marketplace|freshcart)\b", q):
+    if _re.search(
+        r"\b(?:ai|named)\s+project\b|\bproject\s+name\b|"
+        r"\b(grocery|marketplace|freshcart)\b",
+        q,
+    ):
         keys.append("project_name")
     if _re.search(r"\b(agentic|bug\s*resolver)\b", q):
         keys.append("project_description")
@@ -1929,13 +2030,10 @@ def _vector_search_memories(
     memories = []
     for item in memory_collection.aggregate(pipeline):
         score = item.get("score", 0)
-        print(
-            f"[Memory candidate] status={item.get('status', 'active')} "
-            f"Score: {score:.4f}"
-        )
+        mid = str(item.get("_id", "?"))
         if score < min_score:
             print(
-                f"[Memory rejected] Score {score:.4f} "
+                f"[Memory rejected] id={mid} score={score:.4f} "
                 f"< threshold {min_score}"
             )
             continue
@@ -1945,7 +2043,7 @@ def _vector_search_memories(
             item["owner_id"] = item.get("user_id")
         if not item.get("permission_level"):
             item["permission_level"] = "private"
-        # Defense in depth: drop cross-scope / unauthorized hits.
+        # Authorization before any content-bearing logs or downstream ranking.
         if not document_matches_scope(
             item,
             user_id=user_id,
@@ -1953,6 +2051,7 @@ def _vector_search_memories(
             project_id=project_id,
             allow_shared=True,
         ):
+            print(f"[Memory rejected] id={mid} reason=scope_denied")
             continue
         if not check_read_permission(
             user_id,
@@ -1961,7 +2060,13 @@ def _vector_search_memories(
             project_id=project_id,
             audit=False,
         ).get("allowed"):
+            print(f"[Memory rejected] id={mid} reason=permission_denied")
             continue
+
+        print(
+            f"[Memory candidate] id={mid} status={item.get('status', 'active')} "
+            f"score={score:.4f}"
+        )
 
         memories.append({
             "memory_id": str(item["_id"]),
@@ -1993,8 +2098,8 @@ def _vector_search_memories(
     return memories
 
 
-def _extract_memory_fact_pair(item: dict) -> tuple[str, str] | None:
-    """Return (fact_key, normalized_value) for conflict grouping."""
+def _extract_memory_fact_pairs(item: dict) -> list[tuple[str, str]]:
+    """Return all exclusive facts from a record, including legacy compounds."""
     from app.services.memory_conflict_service import (
         EXCLUSIVE_FACT_KEYS,
         classify_project_fact,
@@ -2002,11 +2107,28 @@ def _extract_memory_fact_pair(item: dict) -> tuple[str, str] | None:
         normalize_fact_key,
         _normalize_value,
     )
+    from app.services.memory_fact_extraction import extract_facts_from_message
 
     if not isinstance(item, dict):
-        return None
+        return []
 
     memory_text = str(item.get("memory", ""))
+    parsed = extract_facts_from_message("Remember that " + memory_text)
+    parsed_pairs = [
+        (
+            normalize_fact_key(str(fact.fact_key)),
+            _normalize_value(str(fact.normalized_value)),
+        )
+        for fact in parsed.facts
+        if fact.fact_key
+        and normalize_fact_key(str(fact.fact_key)) in EXCLUSIVE_FACT_KEYS
+        and fact.normalized_value
+    ]
+    if parsed_pairs:
+        # Older rows may store several declarations in one text field while
+        # carrying only the first declaration's fact_key/normalized_value.
+        return list(dict.fromkeys(parsed_pairs))
+
     classified = classify_project_fact(memory_text)
     if classified:
         key, value = classified
@@ -2016,15 +2138,15 @@ def _extract_memory_fact_pair(item: dict) -> tuple[str, str] | None:
         if not key or value is None:
             extracted = extract_exclusive_fact(memory_text)
             if not extracted:
-                return None
+                return []
             key, value = extracted
         else:
             key = normalize_fact_key(str(key))
             value = _normalize_value(str(value))
 
     if key not in EXCLUSIVE_FACT_KEYS:
-        return None
-    return key, value
+        return []
+    return [(key, value)]
 
 
 def detect_conflicting_active_facts(memories: list[dict]) -> list[dict]:
@@ -2038,14 +2160,11 @@ def detect_conflicting_active_facts(memories: list[dict]) -> list[dict]:
         if status not in ("active", None):
             continue
 
-        pair = _extract_memory_fact_pair(item)
-        if pair is None:
-            continue
-        key, value = pair
-        entry = dict(item)
-        entry["fact_key"] = key
-        entry["normalized_value"] = value
-        by_key.setdefault(key, []).append(entry)
+        for key, value in _extract_memory_fact_pairs(item):
+            entry = dict(item)
+            entry["fact_key"] = key
+            entry["normalized_value"] = value
+            by_key.setdefault(key, []).append(entry)
 
     conflicts = []
     for key, items in by_key.items():
@@ -2073,18 +2192,15 @@ def detect_active_pending_conflicts(memories: list[dict]) -> list[dict]:
     for item in memories:
         if not isinstance(item, dict):
             continue
-        pair = _extract_memory_fact_pair(item)
-        if pair is None:
-            continue
-        key, value = pair
-        entry = dict(item)
-        entry["fact_key"] = key
-        entry["normalized_value"] = value
         status = item.get("status", "active")
-        if status == "needs_review":
-            pending.setdefault(key, []).append(entry)
-        elif status in ("active", None):
-            actives.setdefault(key, []).append(entry)
+        for key, value in _extract_memory_fact_pairs(item):
+            entry = dict(item)
+            entry["fact_key"] = key
+            entry["normalized_value"] = value
+            if status == "needs_review":
+                pending.setdefault(key, []).append(entry)
+            elif status in ("active", None):
+                actives.setdefault(key, []).append(entry)
 
     conflicts = []
     for key, pending_items in pending.items():
@@ -2195,6 +2311,12 @@ def semantic_search_memories(
             project_id=project_id,
             tenant_id=tenant_id,
         )
+        memories = _authorize_memory_candidates(
+            memories,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+        )
         for mem in memories:
             mem["vector_score"] = mem.get("score")
 
@@ -2221,12 +2343,19 @@ def semantic_search_memories(
                     or _lexical_relevance_boost(query, item.get("memory", "")) > 0
                 ):
                     memories = _merge_memory_candidates(memories, [item])
+                    memories = _authorize_memory_candidates(
+                        memories,
+                        user_id=user_id,
+                        tenant_id=tenant_id,
+                        project_id=project_id,
+                    )
 
         # Structured fact-key retrieval: do not rely on vector top-k alone
-        # for exclusive preferences (active + pending conflict partners).
-        if exclusive_intents:
+        # for explicitly requested facts, including non-exclusive named
+        # projects recovered from legacy compound rows.
+        if intent_keys:
             statuses = ("active", "needs_review") if include_needs_review else ("active",)
-            for key in exclusive_intents:
+            for key in intent_keys:
                 by_key = find_memories_by_fact_key(
                     user_id=user_id,
                     fact_key=key,
@@ -2247,6 +2376,12 @@ def semantic_search_memories(
                         item["score"] = 0.82
                     extras.append(item)
                 memories = _merge_memory_candidates(memories, extras)
+                memories = _authorize_memory_candidates(
+                    memories,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                )
                 print(
                     f"[Fact-key retrieval] key={key} "
                     f"merged={len(extras)} status={list(statuses)}"
@@ -2287,12 +2422,25 @@ def semantic_search_memories(
                         project_id=project_id,
                     )
                     memories = _merge_memory_candidates(memories, extras)
+                    memories = _authorize_memory_candidates(
+                        memories,
+                        user_id=user_id,
+                        tenant_id=tenant_id,
+                        project_id=project_id,
+                    )
                 except Exception as group_error:
                     print(f"[Conflict-group retrieval skipped]: {group_error}")
 
+        memories = _authorize_memory_candidates(
+            memories,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+        )
+
         print(
-            f"[Semantic search] Query: {query} | "
-            f"Relevant results: {len(memories)}"
+            f"[Semantic search] Query: {query[:80]!r} | "
+            f"authorized_results={len(memories)}"
         )
 
         # Stage 19: Lexical relevance reranking — penalize results
@@ -2305,8 +2453,8 @@ def semantic_search_memories(
             if lexical_boost == 0.0 and mem.get("status") != "needs_review":
                 mem["score"] = float(mem.get("score") or 0.0) * 0.60
                 print(
-                    f"[Relevance penalty] No lexical overlap: "
-                    f"{mem['memory'][:60]}"
+                    f"[Relevance penalty] id={_memory_log_id(mem)} "
+                    "no_lexical_overlap"
                 )
             # Project-aware intent boost (primary vs name vs description).
             intent_boost = _project_intent_boost(query, mem)
@@ -2320,6 +2468,20 @@ def semantic_search_memories(
 
         # Stage 19: Deduplicate textual duplicates before ranking.
         memories = _deduplicate_results(memories)
+
+        from app.services.memory_fact_extraction import is_summary_artifact_text
+
+        memories = [
+            m
+            for m in memories
+            if not is_summary_artifact_text(str(m.get("memory") or ""))
+        ]
+        memories = _authorize_memory_candidates(
+            memories,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+        )
 
         def _rank_key(item):
             status_rank = 0 if item.get("status", "active") == "active" else 1
@@ -2369,35 +2531,17 @@ def semantic_search_memories(
             )
             print(
                 f"Status: {item.get('status', 'active')} | "
+                f"id={_memory_log_id(item)} | "
                 f"Importance: {item.get('importance', 3)}/5 | "
                 f"Confidence: {item.get('confidence', 0.75):.2f} | "
                 f"{vector_part}"
                 f"Adjusted: {float(item.get('score') or 0.0):.4f} | "
                 f"Freshness: {freshness_score:.4f} | "
                 f"Weighted: {weighted_score:.4f} | "
-                f"{stale_flag} | "
-                f"Memory: {item['memory']}"
+                f"{stale_flag}"
             )
 
-        # Never treat generated digests that leaked into memories_history
-        # as ordinary long-term facts.
-        from app.services.memory_fact_extraction import is_summary_artifact_text
-
-        memories = [
-            m
-            for m in memories
-            if not is_summary_artifact_text(str(m.get("memory") or ""))
-        ]
-        for mem in memories:
-            _ensure_identity_fields(mem, fallback_user_id=user_id)
-        memories = filter_documents_by_scope(
-            memories,
-            user_id=user_id,
-            tenant_id=tenant_id,
-            project_id=project_id,
-            allow_shared=True,
-        )
-        memories = filter_readable_documents(
+        memories = _authorize_memory_candidates(
             memories,
             user_id=user_id,
             tenant_id=tenant_id,
@@ -2587,9 +2731,17 @@ def reinforce_memory(
             update_doc["$set"]["last_reinforce_operation_id"] = operation_id
             update_doc["$addToSet"] = {"reinforce_operation_ids": operation_id}
 
-        result = memory_collection.update_one(query, update_doc)
+        blocked = _begin_durable_commit()
+        if blocked is not None:
+            return blocked
+        try:
+            result = memory_collection.update_one(query, update_doc)
+        except Exception:
+            _finish_durable_commit(success=False)
+            raise
 
         if result.matched_count == 0:
+            _finish_durable_commit(success=False)
             # Missing/inactive, or this operation_id was claimed concurrently.
             if operation_id:
                 claimed = memory_collection.find_one(
@@ -2612,6 +2764,7 @@ def reinforce_memory(
                 "success": False,
                 "error": "Active memory not found for this user",
             }
+        _finish_durable_commit(success=True)
 
         updated = memory_collection.find_one(
             {"_id": ObjectId(memory_id), "user_id": user_id}
@@ -2884,8 +3037,13 @@ def supersede_memory(
             "idempotent": True,
         }
 
+    blocked = _begin_durable_commit()
+    if blocked is not None:
+        return blocked
+
     preloaded = _load_memory_doc(memory_id)
     if preloaded is None:
+        _finish_durable_commit(success=False)
         return {
             "success": False,
             "error": "Memory not found for this user",
@@ -2900,6 +3058,7 @@ def supersede_memory(
         operation_id=operation_id,
     )
     if denied is not None:
+        _finish_durable_commit(success=False)
         return {
             **denied,
             "error_code": "not_found",
@@ -3101,6 +3260,7 @@ def supersede_memory(
                 fact_key=fact_key,
             )
 
+            _finish_durable_commit(success=True)
             return {
                 "success": True,
                 "old_memory_id": memory_id,
@@ -3112,6 +3272,7 @@ def supersede_memory(
             }
 
         except _SupersedeAbort as e:
+            _finish_durable_commit(success=False)
             log_memory_operation(
                 "supersede_memory",
                 user_id,
@@ -3172,6 +3333,7 @@ def supersede_memory(
                 f"[Memory supersede error] phase={phase} "
                 f"{type(e).__name__}: {e}"
             )
+            _finish_durable_commit(success=False)
             return {
                 "success": False,
                 "error": str(e),
@@ -3179,6 +3341,7 @@ def supersede_memory(
                 "phase": phase,
             }
 
+    _finish_durable_commit(success=False)
     return {
         "success": False,
         "error": f"Transaction failed after retries: {last_error}",
@@ -3361,16 +3524,24 @@ def delete_memory(
 
         if soft:
             owner_filter["status"] = {"$nin": ["forgotten", "superseded"]}
-            result = memory_collection.update_one(
-                owner_filter,
-                {
-                    "$set": {
-                        "status": "forgotten",
-                        "updated_at": current_time,
-                        "operation_id": operation_id,
-                    }
-                },
-            )
+            blocked = _begin_durable_commit()
+            if blocked is not None:
+                return blocked
+            try:
+                result = memory_collection.update_one(
+                    owner_filter,
+                    {
+                        "$set": {
+                            "status": "forgotten",
+                            "updated_at": current_time,
+                            "operation_id": operation_id,
+                        }
+                    },
+                )
+                _finish_durable_commit(success=True)
+            except Exception:
+                _finish_durable_commit(success=False)
+                raise
             if result.matched_count == 0:
                 # Idempotent soft-forget if already forgotten by this user.
                 existing = memory_collection.find_one(
@@ -3540,3 +3711,64 @@ def safe_deduplicate_memories(user_id: str, dry_run: bool = True) -> dict:
     except Exception as e:
         print(f"[Deduplication error]: {e}")
         return {"success": False, "error": str(e)}
+
+
+def _legacy_compound_fact_candidates(
+    *,
+    user_id: str,
+    fact_key: str,
+    statuses: list[str],
+    include_missing_active: bool,
+    limit: int,
+    project_id: str | None,
+    tenant_id: str | None,
+) -> list[dict]:
+    """Recover additional indexed facts from old compound memory rows."""
+    from app.services.memory_conflict_service import normalize_fact_key
+    from app.services.memory_fact_extraction import extract_facts_from_message
+
+    status_filter: dict = {"status": {"$in": statuses}}
+    if include_missing_active:
+        status_filter = {
+            "$or": [
+                {"status": {"$in": statuses}},
+                {"status": {"$exists": False}},
+            ]
+        }
+    query = {
+        "$and": [
+            build_scope_filter(
+                user_id=user_id,
+                tenant_id=tenant_id,
+                project_id=project_id,
+                include_shared_with_user=True,
+            ),
+            status_filter,
+        ]
+    }
+    target_key = normalize_fact_key(str(fact_key))
+    matches: list[dict] = []
+    for item in memory_collection.find(query).sort("updated_at", -1).limit(
+        max(limit * 20, 100)
+    ):
+        extracted = extract_facts_from_message(
+            "Remember that " + str(item.get("memory") or "")
+        )
+        matching_fact = next(
+            (
+                fact
+                for fact in extracted.facts
+                if fact.fact_key
+                and normalize_fact_key(fact.fact_key) == target_key
+            ),
+            None,
+        )
+        if matching_fact is None:
+            continue
+        candidate = _doc_to_memory_candidate(item, fallback_user_id=user_id)
+        candidate["fact_key"] = target_key
+        candidate["normalized_value"] = matching_fact.normalized_value
+        matches.append(candidate)
+        if len(matches) >= limit:
+            break
+    return matches

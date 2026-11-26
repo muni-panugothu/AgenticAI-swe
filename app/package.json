@@ -5,9 +5,12 @@
   "private": true,
   "scripts": {
     "start": "expo start --dev-client",
-    "start:go": "expo start",
+    "start:go": "expo start --go",
+    "start:dev": "expo start --dev-client",
     "android": "expo run:android",
     "android:device": "expo run:android --device",
+    "android:apk": "cd android && gradlew.bat assembleRelease",
+    "android:apk:debug": "cd android && gradlew.bat assembleDebug",
     "ios": "expo run:ios",
     "prebuild": "expo prebuild",
     "prebuild:clean": "expo prebuild --clean",

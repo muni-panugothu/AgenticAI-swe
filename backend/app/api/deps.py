@@ -7,8 +7,10 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.concurrency import run_in_threadpool
 
 from app.core.security import decode_access_token
+from app.services import auth_service
 from app.services.auth_service import get_user_by_id
 
 _bearer = HTTPBearer(auto_error=False)
@@ -39,7 +41,10 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid or expired token", "code": "INVALID_TOKEN"},
         )
-    user = get_user_by_id(str(payload["sub"]))
+    user = await run_in_threadpool(
+        get_user_by_id,
+        str(payload["sub"]),
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -50,6 +55,15 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "Account is disabled", "code": "ACCOUNT_DISABLED"},
         )
+    session_is_active = await run_in_threadpool(
+        auth_service.get_active_session,
+        str(payload["sid"]),
+        str(user["_id"]),
+    )
+    if not session_is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"error": "Session revoked or expired", "code": "SESSION_REVOKED"})
+    if payload.get("email") != user.get("email") or payload.get("tenant_id") != user.get("tenant_id"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"error": "Token identity mismatch", "code": "INVALID_TOKEN"})
     return AuthenticatedUser(
         id=str(user["_id"]),
         email=user["email"],

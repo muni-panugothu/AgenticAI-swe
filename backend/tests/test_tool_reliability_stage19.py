@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app import chatbot
@@ -14,7 +16,20 @@ from app.services.memory_service import (
 )
 from app.tools import file_reader
 from app.tools.calculator import calculator
-from app.tools.file_reader import read_file
+from app.tools.file_reader import MAX_LINE_SPAN, read_file
+
+
+def _top_level_def_span(rel_path: str, name: str) -> tuple[int, int]:
+    """Return (lineno, end_lineno) for a top-level def in PROJECT_ROOT."""
+    path = file_reader.PROJECT_ROOT / Path(rel_path)
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            end = getattr(node, "end_lineno", None)
+            if end is None:
+                raise AssertionError(f"{name} has no end_lineno")
+            return int(node.lineno), int(end)
+    raise AssertionError(f"top-level def {name!r} not found in {rel_path}")
 
 
 class TestEditorRetrievalPrecision(unittest.TestCase):
@@ -169,24 +184,49 @@ class TestFileReaderValidation(unittest.TestCase):
         self.assertFalse(meta.get("empty"))
 
     def test_function_boundary_stops_before_next_top_level_def(self):
-        # Window covering the end of execute_tool must stop before add_to_*.
-        result = read_file("app/chatbot.py", line_start=900, line_end=980)
+        # Contract: a span-limited window covering the *end* of execute_tool
+        # must clip before add_to_conversation_memory and not request more.
+        # Line numbers are resolved via AST — chatbot.py grows across phases.
+        exec_start, exec_end = _top_level_def_span("app/chatbot.py", "execute_tool")
+        add_start, _ = _top_level_def_span(
+            "app/chatbot.py", "add_to_conversation_memory"
+        )
+        self.assertLess(exec_end, add_start)
+        line_start = max(exec_start, exec_end - 40)
+        line_end = line_start + MAX_LINE_SPAN + 10  # force span_limited past next def
+        result = read_file(
+            "app/chatbot.py", line_start=line_start, line_end=line_end
+        )
         self.assertIsInstance(result, str)
         meta, _, body = result.partition("\ncontent:\n")
         payload = json.loads(meta)
         self.assertTrue(payload["span_limited"])
         self.assertFalse(payload["needs_continuation"])
         self.assertTrue(payload["function_complete"])
+        self.assertEqual(payload["line_end"], exec_end)
         self.assertNotIn("def add_to_conversation_memory", body)
-        self.assertIn("Tool execution error", body)
+        # execute_tool body references the async await path / finalize helpers.
+        self.assertTrue(
+            "execute_tool_async" in body or "finalize_tool_success" in body,
+            msg=body[:400],
+        )
 
     def test_span_limited_mid_function_still_needs_continuation(self):
-        result = read_file("app/chatbot.py", line_start=820, line_end=890)
+        # Contract: mid-body span cap leaves the open function incomplete.
+        # Use chat_with_ai (large) — execute_tool was split into helpers in Topics 43/44.
+        fn_start, fn_end = _top_level_def_span("app/chatbot.py", "chat_with_ai")
+        line_start = fn_start + 20
+        self.assertLess(line_start + MAX_LINE_SPAN, fn_end)
+        line_end = line_start + MAX_LINE_SPAN + 20
+        result = read_file(
+            "app/chatbot.py", line_start=line_start, line_end=line_end
+        )
         payload = json.loads(result.split("\ncontent:\n", 1)[0])
         self.assertTrue(payload["span_limited"])
         self.assertTrue(payload["needs_continuation"])
         self.assertFalse(payload.get("function_complete"))
         self.assertEqual(payload["continuation"]["next_line"], payload["line_end"] + 1)
+        self.assertLess(payload["line_end"], fn_end)
 
     def test_json_safe_tool_errors_via_execute_tool(self):
         result = chatbot.execute_tool(

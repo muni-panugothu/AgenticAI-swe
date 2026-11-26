@@ -246,6 +246,43 @@ def _strip_remember_prefix(statement: str) -> str:
     return _REMEMBER_PREFIX.sub("", statement).strip().rstrip(".!?")
 
 
+def _split_compound_fact_statement(statement: str) -> list[str]:
+    """Separate explicitly coordinated profile facts before key extraction.
+
+    Legacy text such as "my preferred language is JavaScript and my project
+    is FreshCart" was being stored as one preferred-language value. Only split
+    at a conjunction followed by a recognizable fact declaration, so ordinary
+    lists like "I like Python and JavaScript" remain intact.
+    """
+    text = (statement or "").strip()
+    preserved_project = re.split(
+        r"(?i)\s*,?\s+but\s+keep\s+my\s+(?:current\s+)?project\s+as\s+",
+        text,
+        maxsplit=1,
+    )
+    if len(preserved_project) == 2:
+        language_clause, project_value = preserved_project
+        if language_clause.strip() and project_value.strip():
+            return [
+                language_clause.strip(),
+                f"My project is {project_value.strip()}",
+            ]
+
+    fact_start = (
+        r"(?:my\s+(?:(?:preferred|primary|current|main|favorite|favourite)\s+)*"
+        r"(?:programming\s+)?(?:language|(?:ai\s+)?project|database|editor|goal|role|"
+        r"company|job|name|city|location)\b|"
+        r"i\s+(?:prefer|work\s+at|am\s+learning|am\s+working\s+on)\b)"
+    )
+    parts = re.split(
+        rf"(?i)\s+(?:and|but)\s+(?={fact_start})",
+        text,
+        maxsplit=3,
+    )
+    cleaned = [part.strip(" ,;") for part in parts if part.strip(" ,;")]
+    return cleaned if len(cleaned) > 1 else [text]
+
+
 def _extract_editor(statement: str) -> tuple[str, str] | None:
     text = statement.strip().rstrip(".!?")
     match = re.match(
@@ -304,6 +341,19 @@ def _extract_os(statement: str) -> tuple[str, str] | None:
 def _extract_project_role(statement: str) -> tuple[str, str, bool] | None:
     """Return (fact_key, normalized_value, exclusive) for project statements."""
     text = statement.strip().rstrip(".!?")
+
+    # An AI project is a named project, not a replacement for the user's
+    # exclusive primary-project preference. Keeping it multi-valued prevents
+    # statements like "my AI project is X" from conflicting with "my project
+    # is Alpha".
+    ai_project = re.match(
+        r"^my\s+ai\s+project\s+is\s+(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if ai_project:
+        value = _normalize_value(ai_project.group(1))
+        return ("project_name", value, False) if value else None
 
     # Explicit secondary / completed / planned / historical remain multi-valued.
     match = re.match(
@@ -425,9 +475,10 @@ def extract_facts_from_message(user_message: str) -> ExtractionResult:
         # Drop pure "Remember that" leftovers.
         if re.fullmatch(r"(?i)remember\s+that\.?", statement.strip()):
             continue
-        fact = extract_fact_from_statement(statement)
-        if fact is not None:
-            facts.append(fact)
+        for component in _split_compound_fact_statement(statement):
+            fact = extract_fact_from_statement(component)
+            if fact is not None:
+                facts.append(fact)
 
     # De-dupe identical normalized facts within the same message.
     unique: list[ExtractedFact] = []

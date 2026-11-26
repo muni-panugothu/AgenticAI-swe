@@ -1,0 +1,127 @@
+{
+  "version": "1.0.0",
+  "description": "Synthetic evaluation-only corpus for rag_golden_v2. Chunk IDs are fixed to match golden relevant_chunk_ids. Not production data.",
+  "id_strategy": "direct_insertion",
+  "id_strategy_notes": "Seed inserts use exact document_id and chunk_id from this manifest (e.g. doc-policy-md:2). Normal ingest_document() hashing is intentionally not used so golden labels remain stable.",
+  "capture_marker_field": "eval_capture_run_id",
+  "documents": [
+    {
+      "document_id": "doc-policy-md",
+      "filename": "leave_policy.md",
+      "file_type": "md",
+      "content_type": "text/markdown",
+      "source_file": "leave_policy.md",
+      "visibility": "private",
+      "owner_id": "alice",
+      "tenant_id": "t1",
+      "project_id": null,
+      "shared_with": [],
+      "permission_level": "private",
+      "chunks": [
+        {
+          "chunk_index": 0,
+          "chunk_id": "doc-policy-md:0",
+          "heading_path": ["Leave Policy", "Purpose"],
+          "start_line": 1,
+          "end_line": 6,
+          "text": "SYNTHETIC EVAL FIXTURE — leave_policy.md section Purpose.\nThis employee leave policy describes paid time off eligibility for evaluation only.\nIt is not a real company policy and contains no personal data."
+        },
+        {
+          "chunk_index": 1,
+          "chunk_id": "doc-policy-md:1",
+          "heading_path": ["Leave Policy", "Accrual"],
+          "start_line": 8,
+          "end_line": 14,
+          "text": "SYNTHETIC EVAL FIXTURE — leave accrual.\nEmployees accrue leave monthly according to tenure bands defined in this evaluation document.\nAccrual examples are fictional and used only for RAG retrieval tests."
+        },
+        {
+          "chunk_index": 2,
+          "chunk_id": "doc-policy-md:2",
+          "heading_path": ["Leave Policy", "Notice Period"],
+          "start_line": 16,
+          "end_line": 24,
+          "text": "SYNTHETIC EVAL FIXTURE — notice period.\nAccording to the leave policy, the notice period is 14 days before planned leave begins.\nManagers should receive written notice at least 14 days in advance for scheduled absences."
+        }
+      ]
+    },
+    {
+      "document_id": "doc-handbook-pdf",
+      "filename": "handbook.pdf",
+      "file_type": "pdf",
+      "content_type": "application/pdf",
+      "source_file": "handbook.txt",
+      "visibility": "shared",
+      "owner_id": "bob",
+      "tenant_id": "t1",
+      "project_id": null,
+      "shared_with": ["alice"],
+      "permission_level": "shared_read",
+      "chunks": [
+        {
+          "chunk_index": 0,
+          "chunk_id": "doc-handbook-pdf:0",
+          "heading_path": ["Handbook", "Welcome"],
+          "page": 1,
+          "start_line": 1,
+          "end_line": 5,
+          "text": "SYNTHETIC EVAL FIXTURE — handbook welcome.\nThis evaluation handbook summarizes workplace guidelines for fixture testing only.\nNo real employee records are included."
+        },
+        {
+          "chunk_index": 1,
+          "chunk_id": "doc-handbook-pdf:1",
+          "heading_path": ["Handbook", "Safety"],
+          "page": 2,
+          "start_line": 7,
+          "end_line": 14,
+          "text": "SYNTHETIC EVAL FIXTURE — safety drills.\nThe handbook says safety drills are conducted on a quarterly cadence.\nEvery team must complete the quarterly safety drill and record attendance."
+        }
+      ]
+    },
+    {
+      "document_id": "doc-roster-csv",
+      "filename": "roster.csv",
+      "file_type": "csv",
+      "content_type": "text/csv",
+      "source_file": "roster.csv",
+      "visibility": "private",
+      "owner_id": "alice",
+      "tenant_id": "t1",
+      "project_id": "proj-hr",
+      "shared_with": [],
+      "permission_level": "private",
+      "chunks": [
+        {
+          "chunk_index": 0,
+          "chunk_id": "doc-roster-csv:0",
+          "heading_path": ["Roster"],
+          "start_line": 1,
+          "end_line": 5,
+          "text": "SYNTHETIC EVAL FIXTURE — roster.csv for project proj-hr.\nrole,name\nengineer,Ada\nengineer,Grace\nengineer,Linus\nThere are 3 engineers listed in the roster for evaluation only."
+        }
+      ]
+    },
+    {
+      "document_id": "doc-other-tenant",
+      "filename": "secrets.txt",
+      "file_type": "txt",
+      "content_type": "text/plain",
+      "source_file": "secrets.txt",
+      "visibility": "private",
+      "owner_id": "mallory",
+      "tenant_id": "t2",
+      "project_id": null,
+      "shared_with": [],
+      "permission_level": "private",
+      "chunks": [
+        {
+          "chunk_index": 0,
+          "chunk_id": "doc-other-tenant:0",
+          "heading_path": ["Secrets"],
+          "start_line": 1,
+          "end_line": 4,
+          "text": "SYNTHETIC EVAL FIXTURE — other-tenant secrets.\nMallory private note for tenant t2 isolation tests: SECRET_TOKEN_EVAL_ONLY_NEVER_SHARE.\nThis content must remain invisible to alice in tenant t1."
+        }
+      ]
+    }
+  ]
+}

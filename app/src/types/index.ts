@@ -1,7 +1,14 @@
 export type RootStackParamList = {
   MainTabs: undefined;
   VoiceChat: undefined;
-  SmartChat: { initialMessage?: string; actionId?: string } | undefined;
+  SmartChat:
+    | {
+        initialMessage?: string;
+        actionId?: string;
+        conversationId?: string;
+        openAttach?: boolean;
+      }
+    | undefined;
   Profile: undefined;
   Login: undefined;
   Register: undefined;

@@ -59,10 +59,12 @@ export async function pickAndUploadFile(): Promise<{
 export async function pasteAndIngest(text: string): Promise<{
   chunkCount: number;
   strategy: string;
+  filename: string;
 }> {
   const result = await ingestDocument(text, 'recursive');
   return {
     chunkCount: result.chunkCount,
     strategy: 'recursive',
+    filename: result.filename || 'pasted.txt',
   };
 }

@@ -1,0 +1,124 @@
+{
+  "version": "2.0.0",
+  "description": "Human-reviewable golden set for offline RAG evaluation. Chunk IDs are fixtures only — never real user documents. Synthetic labels must not be treated as human-approved until review.status is approved.",
+  "review": {
+    "status": "approved",
+    "reviewed_by": "project-maintainer",
+    "process": "docs/RAG_EVALUATION_GOLDEN_REVIEW.md",
+    "notes": "Fixture corpus covering multi-format, multi-doc, abstention, metadata filters, and ACL isolation."
+  },
+  "documents": [
+    {
+      "document_id": "doc-policy-md",
+      "file_type": "md",
+      "filename": "leave_policy.md",
+      "visibility": "private",
+      "owner_id": "alice",
+      "tenant_id": "t1",
+      "project_id": null
+    },
+    {
+      "document_id": "doc-handbook-pdf",
+      "file_type": "pdf",
+      "filename": "handbook.pdf",
+      "visibility": "shared",
+      "owner_id": "bob",
+      "tenant_id": "t1",
+      "project_id": null,
+      "shared_with": ["alice"]
+    },
+    {
+      "document_id": "doc-roster-csv",
+      "file_type": "csv",
+      "filename": "roster.csv",
+      "visibility": "private",
+      "owner_id": "alice",
+      "tenant_id": "t1",
+      "project_id": "proj-hr"
+    },
+    {
+      "document_id": "doc-other-tenant",
+      "file_type": "txt",
+      "filename": "secrets.txt",
+      "visibility": "private",
+      "owner_id": "mallory",
+      "tenant_id": "t2",
+      "project_id": null
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "md-leave-notice",
+      "question": "According to the leave policy, what is the notice period?",
+      "document_types": ["md"],
+      "relevant_chunk_ids": ["doc-policy-md:2"],
+      "expected_answer_keywords": ["14", "days"],
+      "expected_abstain": false
+    },
+    {
+      "case_id": "pdf-handbook-safety",
+      "question": "What does the handbook say about safety drills?",
+      "document_types": ["pdf"],
+      "relevant_chunk_ids": ["doc-handbook-pdf:1"],
+      "expected_answer_keywords": ["quarterly"],
+      "expected_abstain": false
+    },
+    {
+      "case_id": "csv-roster-count",
+      "question": "How many engineers are listed in the roster?",
+      "document_types": ["csv"],
+      "metadata_filters": {"project_id": "proj-hr"},
+      "relevant_chunk_ids": ["doc-roster-csv:0"],
+      "expected_answer_keywords": ["3"],
+      "expected_abstain": false
+    },
+    {
+      "case_id": "multi-doc-policy-and-handbook",
+      "question": "Summarize leave notice and safety drill cadence from the uploaded documents.",
+      "document_types": ["md", "pdf"],
+      "relevant_chunk_ids": ["doc-policy-md:2", "doc-handbook-pdf:1"],
+      "expected_answer_keywords": ["14", "quarterly"],
+      "expected_abstain": false
+    },
+    {
+      "case_id": "no-support-home-address",
+      "question": "What is Alice's home address?",
+      "relevant_chunk_ids": [],
+      "expected_answer_keywords": [],
+      "expected_abstain": true
+    },
+    {
+      "case_id": "acl-other-tenant",
+      "question": "What secrets are in mallory's document?",
+      "relevant_chunk_ids": [],
+      "expected_answer_keywords": [],
+      "expected_abstain": true,
+      "expect_acl_isolation": true,
+      "security_gate": true
+    },
+    {
+      "case_id": "acl-private-owner",
+      "question": "What is the leave notice period in my private policy?",
+      "relevant_chunk_ids": ["doc-policy-md:2"],
+      "expected_answer_keywords": ["14"],
+      "expected_abstain": false,
+      "acl_scenario": "private_owner"
+    },
+    {
+      "case_id": "acl-shared-read",
+      "question": "What does the shared handbook say about drills?",
+      "relevant_chunk_ids": ["doc-handbook-pdf:1"],
+      "expected_answer_keywords": ["quarterly"],
+      "expected_abstain": false,
+      "acl_scenario": "shared_read"
+    },
+    {
+      "case_id": "metadata-project-filter",
+      "question": "List roster rows for project proj-hr only.",
+      "metadata_filters": {"project_id": "proj-hr", "tenant_id": "t1"},
+      "relevant_chunk_ids": ["doc-roster-csv:0"],
+      "expected_answer_keywords": ["engineer"],
+      "expected_abstain": false
+    }
+  ]
+}

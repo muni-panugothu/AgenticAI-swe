@@ -20,6 +20,10 @@ from app.services.memory_summary_service import (
     validate_sources_in_scope,
     verify_summary_currency,
 )
+from app.services.memory_service import (
+    detect_active_pending_conflicts,
+    detect_conflicting_active_facts,
+)
 
 
 def _doc(text, *, status="active", fact_key=None, value=None, user="u1", mid=None):
@@ -94,6 +98,21 @@ class TestProjectScopeIsolation(unittest.TestCase):
         text = synthesize_summary_text("project", primary, refs).lower()
         self.assertIn("unresolved", text)
         self.assertNotIn("listifys", text)
+
+    def test_compound_database_and_ai_project_do_not_create_false_conflict(self):
+        active = _doc(
+            "My preferred database is MongoDB and my project is Alpha",
+            fact_key="preferred_database",
+            value="mongodb and my project is alpha",
+        )
+        pending = _doc(
+            "My favorite database is MongoDB and my AI project is AgenticAI-swe",
+            status="needs_review",
+            fact_key="preferred_database",
+            value="mongodb and my ai project is agenticai swe",
+        )
+        self.assertEqual(detect_conflicting_active_facts([active]), [])
+        self.assertEqual(detect_active_pending_conflicts([active, pending]), [])
 
 
 class TestSourceValidation(unittest.TestCase):

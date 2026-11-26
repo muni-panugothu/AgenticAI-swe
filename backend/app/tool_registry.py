@@ -162,12 +162,14 @@ tool_definitions = [
         "name": "web_search",
 
         "description": (
-            "Search the internet for current, "
-            "recent, factual, or external information. "
-            "Use this tool when the user explicitly asks "
-            "to search the web, asks for latest/current/news "
-            "information, or asks about information that may "
-            "have changed recently."
+            "Search the internet for current, recent, or "
+            "externally verifiable information. Use for live "
+            "facts that change over time: officeholders "
+            "(e.g. chief minister), prices/exchange rates, "
+            "latest news or developments, weather, sports "
+            "results, and software release versions. Do not "
+            "use for stable conceptual explanations "
+            "(e.g. 'What is Python?') or for writing code."
         ),
 
         "parameters": {

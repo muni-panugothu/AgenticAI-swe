@@ -15,16 +15,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Header } from '../components/Header';
+import { ChatHeader } from '../components/assistant/ChatHeader';
+import { ChatComposer } from '../components/assistant/ChatComposer';
+import { ConversationDrawer } from '../components/assistant/ConversationDrawer';
 import { ChatBubble } from '../components/ChatBubble';
-import { AIInput } from '../components/AIInput';
 import { DocumentPasteModal } from '../components/DocumentPasteModal';
-import { Colors } from '../constants/colors';
+import { AssistantTheme } from '../constants/assistantTheme';
 import type { RootStackParamList, ChatMessage } from '../types';
 import {
   sendActionMessage,
   streamChatMessage,
+  StreamCancelledError,
+  StreamDeliveryError,
   checkServerHealth,
   listDocuments,
 } from '../services/chatApi';
@@ -37,6 +39,12 @@ import {
   pickAndUploadFile,
   pasteAndIngest,
 } from '../services/attachDocument';
+import {
+  getConversation,
+  newConversationId,
+  upsertConversation,
+  type StoredConversation,
+} from '../services/conversationStore';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type SmartChatRoute = RouteProp<RootStackParamList, 'SmartChat'>;
@@ -56,53 +64,126 @@ export const SmartChatScreen: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [pasteVisible, setPasteVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
+  const [conversationId, setConversationId] = useState(() => newConversationId());
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [liveModel, setLiveModel] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const bootstrapped = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  /** Guards rapid double-tap: one logical send ⇒ one stream POST. */
+  const inFlightRef = useRef(false);
+  const stickToBottomRef = useRef(true);
+  const tokenRafRef = useRef<number | null>(null);
+  const pendingTokenTextRef = useRef<{ id: string; text: string } | null>(null);
 
-  const scrollToEnd = useCallback(() => {
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
+  const scrollToEnd = useCallback((animated = true) => {
+    if (!stickToBottomRef.current) return;
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated }), 80);
   }, []);
 
   const appendMessage = useCallback(
     (msg: ChatMessage) => {
+      stickToBottomRef.current = true;
       setMessages((prev) => [...prev, msg]);
       scrollToEnd();
     },
     [scrollToEnd]
   );
 
-  const retryConnection = useCallback(async (showSuccess = false) => {
-    resetApiDiscovery();
-    const url = await discoverApiBaseUrl();
-    const ok = await checkServerHealth();
-    if (ok) {
-      setError(null);
-      if (showSuccess) {
-        appendMessage({
-          id: `${Date.now()}-sys`,
-          text: `✅ Connected to server at ${url}`,
-          isUser: false,
-          timestamp: formatTime(),
-        });
+  const persist = useCallback(
+    async (nextMessages: ChatMessage[], nextSession?: string) => {
+      await upsertConversation({
+        id: conversationId,
+        sessionId: nextSession ?? sessionId,
+        messages: nextMessages,
+      });
+    },
+    [conversationId, sessionId]
+  );
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    void persist(messages, sessionId);
+  }, [messages, sessionId, persist]);
+
+  const retryConnection = useCallback(
+    async (showSuccess = false) => {
+      resetApiDiscovery();
+      const url = await discoverApiBaseUrl();
+      const ok = await checkServerHealth();
+      if (ok) {
+        setError(null);
+        if (showSuccess) {
+          appendMessage({
+            id: `${Date.now()}-sys`,
+            text: `Connected to server at ${url}`,
+            isUser: false,
+            timestamp: formatTime(),
+          });
+        }
+      } else {
+        setError(getConnectionHelpMessage());
       }
-    } else {
-      setError(getConnectionHelpMessage());
-    }
-  }, [appendMessage]);
+    },
+    [appendMessage]
+  );
 
   useEffect(() => {
     void retryConnection(false);
   }, [retryConnection]);
 
   const updateMessage = useCallback(
-    (id: string, patch: Partial<ChatMessage>) => {
+    (id: string, patch: Partial<ChatMessage>, opts?: { forceScroll?: boolean }) => {
       setMessages((prev) =>
         prev.map((m) => (m.id === id ? { ...m, ...patch } : m))
       );
-      scrollToEnd();
+      if (opts?.forceScroll || stickToBottomRef.current) {
+        scrollToEnd(Boolean(opts?.forceScroll));
+      }
     },
     [scrollToEnd]
   );
+
+  const flushPendingToken = useCallback(() => {
+    tokenRafRef.current = null;
+    const pending = pendingTokenTextRef.current;
+    if (!pending) return;
+    pendingTokenTextRef.current = null;
+    updateMessage(pending.id, { text: pending.text, streaming: true });
+  }, [updateMessage]);
+
+  const scheduleTokenUpdate = useCallback(
+    (id: string, fullText: string) => {
+      pendingTokenTextRef.current = { id, text: fullText };
+      if (tokenRafRef.current != null) return;
+      // Coalesce rapid token events to one UI update per frame.
+      tokenRafRef.current = requestAnimationFrame(flushPendingToken) as unknown as number;
+    },
+    [flushPendingToken]
+  );
+
+  const stopGeneration = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    if (tokenRafRef.current != null) {
+      cancelAnimationFrame(tokenRafRef.current);
+      tokenRafRef.current = null;
+    }
+    flushPendingToken();
+    setLoading(false);
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.streaming
+          ? {
+              ...m,
+              streaming: false,
+              text: m.text || 'Generation stopped.',
+            }
+          : m
+      )
+    );
+  }, [flushPendingToken]);
 
   const requestReply = useCallback(
     async (
@@ -110,14 +191,27 @@ export const SmartChatScreen: React.FC = () => {
       history: { role: 'user' | 'assistant'; content: string }[],
       actionId?: string
     ) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       setLoading(true);
       setError(null);
+      stickToBottomRef.current = true;
 
       const aiId = `${Date.now()}-ai`;
+      let partialText = '';
 
       try {
         if (actionId) {
-          const response = await sendActionMessage(actionId, userText, history);
+          const response = await sendActionMessage(
+            actionId,
+            userText,
+            history,
+            sessionId
+          );
+          if (response.sessionId) setSessionId(response.sessionId);
+          if (response.model) setLiveModel(response.model);
           appendMessage({
             id: aiId,
             text: response.reply,
@@ -140,10 +234,15 @@ export const SmartChatScreen: React.FC = () => {
         });
 
         const response = await streamChatMessage(userText, history, {
+          sessionId,
+          signal: controller.signal,
           onToken: (_token, fullText) => {
-            updateMessage(aiId, { text: fullText, streaming: true });
+            partialText = fullText;
+            scheduleTokenUpdate(aiId, fullText);
           },
           onMeta: (meta) => {
+            if (meta.sessionId) setSessionId(meta.sessionId);
+            if (meta.model) setLiveModel(meta.model);
             updateMessage(aiId, {
               model: meta.model,
               provider: meta.provider,
@@ -152,34 +251,80 @@ export const SmartChatScreen: React.FC = () => {
           },
         });
 
-        updateMessage(aiId, {
-          text: response.reply,
-          streaming: false,
-          model: response.model,
-          provider: response.provider,
-          usage: response.usage,
-          citations: response.citations,
-        });
+        if (tokenRafRef.current != null) {
+          cancelAnimationFrame(tokenRafRef.current);
+          tokenRafRef.current = null;
+        }
+        flushPendingToken();
+
+        if (response.sessionId) setSessionId(response.sessionId);
+        if (response.model) setLiveModel(response.model);
+        updateMessage(
+          aiId,
+          {
+            text: response.reply,
+            streaming: false,
+            model: response.model,
+            provider: response.provider,
+            usage: response.usage,
+            citations: response.citations,
+          },
+          { forceScroll: stickToBottomRef.current }
+        );
       } catch (err) {
+        if (tokenRafRef.current != null) {
+          cancelAnimationFrame(tokenRafRef.current);
+          tokenRafRef.current = null;
+        }
+        flushPendingToken();
+
+        if (
+          err instanceof StreamCancelledError ||
+          controller.signal.aborted
+        ) {
+          updateMessage(aiId, {
+            text: partialText || 'Generation stopped.',
+            streaming: false,
+          });
+          return;
+        }
+        // Preserve any tokens already rendered; never imply a silent retry.
+        const preserved =
+          (err instanceof StreamDeliveryError && err.partialText) ||
+          partialText;
         const message =
           err instanceof Error ? err.message : 'Could not reach AI server';
         setError(message);
         updateMessage(aiId, {
-          text: `⚠️ ${message}`,
+          text: preserved
+            ? `${preserved}\n\n⚠️ ${message}`
+            : `⚠️ ${message}`,
           streaming: false,
           isUser: false,
         });
       } finally {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
         setLoading(false);
+        inFlightRef.current = false;
       }
     },
-    [appendMessage, updateMessage]
+    [
+      appendMessage,
+      updateMessage,
+      sessionId,
+      scheduleTokenUpdate,
+      flushPendingToken,
+    ]
   );
 
   const handleSend = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed || loading || uploading) return;
+      // Batch A: block concurrent duplicate UI submissions of the same send.
+      if (!trimmed || loading || uploading || inFlightRef.current) return;
+      inFlightRef.current = true;
 
       const userMessage: ChatMessage = {
         id: `${Date.now()}-user`,
@@ -197,7 +342,11 @@ export const SmartChatScreen: React.FC = () => {
           content: m.text,
         }));
 
-      await requestReply(trimmed, history.slice(0, -1));
+      try {
+        await requestReply(trimmed, history.slice(0, -1));
+      } catch {
+        inFlightRef.current = false;
+      }
     },
     [appendMessage, loading, uploading, messages, requestReply]
   );
@@ -207,7 +356,7 @@ export const SmartChatScreen: React.FC = () => {
     chunkCount: number,
     strategy: string
   ) =>
-    `✅ Document indexed: ${name}\n${chunkCount} chunks · strategy: ${strategy}\n\nYou can now ask questions about this document.`;
+    `Document indexed: ${name}\n${chunkCount} chunks · strategy: ${strategy}\n\nYou can now ask questions about this document.`;
 
   const handleFileUpload = useCallback(async () => {
     setUploading(true);
@@ -215,7 +364,7 @@ export const SmartChatScreen: React.FC = () => {
     try {
       appendMessage({
         id: `${Date.now()}-upload`,
-        text: '📎 Selecting file…',
+        text: 'Selecting file…',
         isUser: true,
         timestamp: formatTime(),
       });
@@ -247,7 +396,7 @@ export const SmartChatScreen: React.FC = () => {
       try {
         appendMessage({
           id: `${Date.now()}-paste`,
-          text: '📋 Indexing pasted text…',
+          text: 'Indexing pasted text…',
           isUser: true,
           timestamp: formatTime(),
         });
@@ -255,7 +404,7 @@ export const SmartChatScreen: React.FC = () => {
         appendMessage({
           id: `${Date.now()}-paste-ok`,
           text: ingestSuccessMessage(
-            'Pasted document',
+            result.filename || 'Pasted document',
             result.chunkCount,
             result.strategy
           ),
@@ -277,7 +426,10 @@ export const SmartChatScreen: React.FC = () => {
     try {
       const docs = await listDocuments();
       if (docs.length === 0) {
-        Alert.alert('Indexed documents', 'No documents indexed yet.\n\nUse + to upload a PDF, DOCX, CSV, TXT, or MD file.');
+        Alert.alert(
+          'Indexed documents',
+          'No documents indexed yet.\n\nUse + to upload a PDF, DOCX, CSV, TXT, or MD file.'
+        );
         return;
       }
       const lines = docs
@@ -289,7 +441,10 @@ export const SmartChatScreen: React.FC = () => {
         `${lines}${docs.length > 15 ? '\n…' : ''}`
       );
     } catch (err) {
-      Alert.alert('Could not load documents', err instanceof Error ? err.message : 'Error');
+      Alert.alert(
+        'Could not load documents',
+        err instanceof Error ? err.message : 'Error'
+      );
     }
   }, []);
 
@@ -297,24 +452,60 @@ export const SmartChatScreen: React.FC = () => {
     if (loading || uploading) return;
 
     Alert.alert('Add document', 'Choose an option', [
-      { text: 'Pick file (PDF/DOCX/CSV/txt)', onPress: () => void handleFileUpload() },
+      {
+        text: 'Pick file (PDF/DOCX/CSV/txt)',
+        onPress: () => void handleFileUpload(),
+      },
       { text: 'Paste text', onPress: () => setPasteVisible(true) },
       { text: 'View indexed docs', onPress: () => void handleShowDocuments() },
       { text: 'Cancel', style: 'cancel' },
     ]);
   }, [loading, uploading, handleFileUpload, handleShowDocuments]);
 
+  const resetChat = useCallback(() => {
+    setMessages([]);
+    setSessionId(undefined);
+    setConversationId(newConversationId());
+    setError(null);
+    setLiveModel(null);
+  }, []);
+
+  const loadConversation = useCallback((conversation: StoredConversation) => {
+    setConversationId(conversation.id);
+    setSessionId(conversation.sessionId);
+    setMessages(conversation.messages);
+    const lastModel = [...conversation.messages]
+      .reverse()
+      .find((m) => m.model)?.model;
+    setLiveModel(lastModel ?? null);
+    setError(null);
+  }, []);
+
   useEffect(() => {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
 
-    const { initialMessage, actionId } = route.params ?? {};
+    const { initialMessage, actionId, conversationId: restoreId, openAttach } =
+      route.params ?? {};
+
+    if (restoreId) {
+      void getConversation(restoreId).then((conv) => {
+        if (conv) loadConversation(conv);
+      });
+      return;
+    }
+
+    if (openAttach) {
+      setTimeout(() => handleAttachmentPress(), 300);
+    }
+
     if (initialMessage) {
-      handleSend(initialMessage);
+      void handleSend(initialMessage);
     } else if (actionId) {
       setLoading(true);
       sendActionMessage(actionId)
         .then((response) => {
+          if (response.model) setLiveModel(response.model);
           appendMessage({
             id: `${Date.now()}-ai`,
             text: response.reply,
@@ -331,11 +522,7 @@ export const SmartChatScreen: React.FC = () => {
         })
         .finally(() => setLoading(false));
     }
-  }, [route.params, handleSend, appendMessage]);
-
-  const handleBack = useCallback(() => {
-    navigation.goBack();
-  }, [navigation]);
+  }, [route.params, handleSend, appendMessage, handleAttachmentPress, loadConversation]);
 
   const handleVoicePress = useCallback(() => {
     navigation.navigate('VoiceChat');
@@ -359,23 +546,22 @@ export const SmartChatScreen: React.FC = () => {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
-      <LinearGradient
-        colors={[Colors.background, '#FDFBFF']}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 1 }}
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor={AssistantTheme.background}
       />
 
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <Header
-          title="Smart Chat"
-          onBack={handleBack}
-          rightIcon="ellipsis-vertical"
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <ChatHeader
+          onMenuPress={() => navigation.goBack()}
+          onTogglePress={() => setDrawerOpen(true)}
         />
 
         {error ? (
-          <Pressable style={styles.errorBar} onPress={() => void retryConnection(true)}>
+          <Pressable
+            style={styles.errorBar}
+            onPress={() => void retryConnection(true)}
+          >
             <Text style={styles.errorText}>{error}</Text>
             <Text style={styles.retryText}>Tap to retry connection</Text>
           </Pressable>
@@ -383,8 +569,7 @@ export const SmartChatScreen: React.FC = () => {
 
         <KeyboardAvoidingView
           style={styles.keyboardView}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <FlatList
             ref={flatListRef}
@@ -393,28 +578,39 @@ export const SmartChatScreen: React.FC = () => {
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.chatContent}
             showsVerticalScrollIndicator={false}
+            onScroll={(event) => {
+              const { layoutMeasurement, contentOffset, contentSize } =
+                event.nativeEvent;
+              const distanceFromBottom =
+                contentSize.height -
+                (contentOffset.y + layoutMeasurement.height);
+              stickToBottomRef.current = distanceFromBottom < 80;
+            }}
+            scrollEventThrottle={16}
             ListFooterComponent={
               loading ? (
                 <View style={styles.typing}>
-                  <ActivityIndicator color={Colors.primary.main} size="small" />
-                  <Text style={styles.typingText}>AutoPilot is thinking…</Text>
+                  <ActivityIndicator
+                    color={AssistantTheme.textSecondary}
+                    size="small"
+                  />
+                  <Text style={styles.typingText}>Generating…</Text>
                 </View>
               ) : null
             }
           />
 
-          <View style={styles.inputArea}>
-            <AIInput
-              placeholder="Ask me anything..."
-              onSend={handleSend}
-              onVoicePress={handleVoicePress}
-              onAttachmentPress={handleAttachmentPress}
-              showAttachment={true}
-              showVoice={true}
-              disabled={loading}
-              uploading={uploading}
-            />
-          </View>
+          <ChatComposer
+            onSend={handleSend}
+            onVoicePress={handleVoicePress}
+            onAttachmentPress={handleAttachmentPress}
+            onStop={stopGeneration}
+            showAttachment
+            showVoice
+            disabled={uploading}
+            streaming={loading}
+            uploading={uploading}
+          />
 
           <DocumentPasteModal
             visible={pasteVisible}
@@ -424,6 +620,17 @@ export const SmartChatScreen: React.FC = () => {
           />
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      <ConversationDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onNewChat={resetChat}
+        onSelectConversation={loadConversation}
+        onOpenProfile={() => {
+          setDrawerOpen(false);
+          navigation.navigate('Profile');
+        }}
+      />
     </View>
   );
 };
@@ -431,7 +638,7 @@ export const SmartChatScreen: React.FC = () => {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: AssistantTheme.background,
   },
   container: {
     flex: 1,
@@ -440,27 +647,20 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   chatContent: {
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: 12,
+    paddingBottom: 12,
     flexGrow: 1,
-  },
-  inputArea: {
-    paddingVertical: 10,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 14,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border.subtle,
-    backgroundColor: 'rgba(248, 245, 255, 0.95)',
   },
   typing: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
     paddingHorizontal: 20,
     paddingVertical: 12,
   },
   typingText: {
     fontSize: 13,
-    color: Colors.text.secondary,
+    color: AssistantTheme.textSecondary,
+    marginLeft: 8,
   },
   errorBar: {
     backgroundColor: '#FEE2E2',
@@ -474,7 +674,7 @@ const styles = StyleSheet.create({
   },
   retryText: {
     fontSize: 11,
-    color: '#7C3AED',
+    color: AssistantTheme.textPrimary,
     fontWeight: '700',
     marginTop: 4,
   },

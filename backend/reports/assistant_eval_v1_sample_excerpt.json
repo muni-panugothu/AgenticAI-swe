@@ -1,0 +1,233 @@
+{
+  "framework": "assistant_eval",
+  "dataset_version": "1.0.0",
+  "mode": "offline",
+  "case_count": 58,
+  "category_counts": {
+    "abbreviations": 3,
+    "ambiguous": 3,
+    "code_explanation_debug": 3,
+    "code_generation": 3,
+    "conversation_followups": 3,
+    "current_information": 6,
+    "error_handling_uncertainty": 3,
+    "general_knowledge": 3,
+    "instruction_following": 3,
+    "mathematics": 3,
+    "multi_step_workflows": 3,
+    "multilingual": 3,
+    "personal_memory_permissions": 4,
+    "prompt_injection_adversarial": 3,
+    "rag_retrieval_abstention": 3,
+    "tool_selection_execution": 3,
+    "typos_incomplete": 3,
+    "writing_documentation": 3
+  },
+  "summary": {
+    "PASS": 56,
+    "FAIL": 2,
+    "BLOCKED": 0,
+    "NEEDS_REVIEW": 0
+  },
+  "runtime": {
+    "total_ms": 2609.087,
+    "avg_case_latency_ms": 0.307,
+    "max_case_latency_ms": 7.459
+  },
+  "token_usage": {
+    "cases_with_usage": 0,
+    "note": "Token usage is recorded only when a live provider response includes usage metadata.",
+    "rows": []
+  },
+  "limitations": [
+    "Offline mode scores routing, tool selection, schemas, and fixture retrieval \u2014 not free-form answer quality.",
+    "Live mode is explicitly gated and does not run by default.",
+    "Open-ended answers marked requires_human_review need human assessment.",
+    "This framework does not prove production readiness by itself."
+  ],
+  "example_pass": {
+    "case_id": "math-01",
+    "category": "mathematics",
+    "status": "PASS",
+    "mode": "offline",
+    "input_message": "Calculate 17 * 23",
+    "expected_intent": "calculation",
+    "classified_intent": "calculation",
+    "actual_intent": "calculation",
+    "expected_tools": [
+      "calculator"
+    ],
+    "actual_tools": [
+      "calculator"
+    ],
+    "tools_enabled": true,
+    "forced_tool_choice": {
+      "type": "function",
+      "name": "calculator"
+    },
+    "route_kind": "calculation",
+    "assertions": [
+      {
+        "checked": true,
+        "passed": true,
+        "expected": "calculation",
+        "actual": "calculation",
+        "detail": "intent match",
+        "hard": true
+      },
+      {
+        "checked": true,
+        "passed": true,
+        "checks": [
+          {
+            "name": "tools_enabled",
+            "passed": true,
+            "expected": true,
+            "actual": true
+          },
+          {
+            "name": "required_tool",
+            "tool": "calculator",
+            "passed": true
+          }
+        ],
+        "actual_tools": [
+          "calculator"
+        ],
+        "hard": true
+      },
+      {
+        "checked": true,
+        "passed": true,
+        "hard": true,
+        "name": "route_kind",
+        "expected": "calculation",
+        "actual": "calculation"
+      },
+      {
+        "checked": true,
+        "passed": true,
+        "expected": "calculator",
+        "actual": "calculator",
+        "hard": true
+      },
+      {
+        "checked": true,
+        "passed": true,
+        "hard": true,
+        "tool": "calculator",
+        "detail": "pydantic ok"
+      },
+      {
+        "checked": true,
+        "tool": "calculator",
+        "passed": true,
+        "missing_keys": [],
+        "argument_keys": [
+          "expression"
+        ],
+        "hard": true
+      },
+      {
+        "checked": false,
+        "passed": true,
+        "hard": true
+      },
+      {
+        "checked": false,
+        "passed": true,
+        "checks": [],
+        "relevance": null,
+        "hard": true
+      },
+      {
+        "checked": true,
+        "passed": true,
+        "expected": 391,
+        "detail": "numeric substring found",
+        "hard": true
+      },
+      {
+        "checked": false,
+        "passed": true,
+        "hard": true
+      },
+      {
+        "checked": false,
+        "passed": true,
+        "checks": [],
+        "hard": true
+      }
+    ],
+    "latency_ms": 0.078,
+    "token_usage": null,
+    "block_reason": null,
+    "error": null,
+    "requires_human_review": false,
+    "notes": null
+  },
+  "example_fail": {
+    "case_id": "curr-cm-tg-03",
+    "category": "current_information",
+    "status": "FAIL",
+    "mode": "offline",
+    "input_message": "who is telangana cm currently",
+    "expected_intent": "current_information",
+    "classified_intent": "general_conversation",
+    "actual_intent": "general_conversation",
+    "expected_tools": [
+      "web_search"
+    ],
+    "actual_tools": [],
+    "tools_enabled": false,
+    "forced_tool_choice": "auto",
+    "route_kind": "direct",
+    "assertions": [
+      {
+        "checked": true,
+        "passed": false,
+        "expected": "current_information",
+        "actual": "general_conversation",
+        "detail": "intent mismatch",
+        "hard": true
+      },
+      {
+        "checked": true,
+        "passed": false,
+        "checks": [
+          {
+            "name": "tools_enabled",
+            "passed": false,
+            "expected": true,
+            "actual": false
+          },
+          {
+            "name": "required_tool",
+            "tool": "web_search",
+            "passed": false
+          }
+        ],
+        "actual_tools": [],
+        "hard": true
+      },
+      {
+        "checked": true,
+        "passed": false,
+        "expected": "web_search",
+        "actual": "auto",
+        "hard": true
+      },
+      {
+        "checked": false,
+        "passed": true,
+        "hard": true
+      }
+    ],
+    "latency_ms": 0.27,
+    "token_usage": null,
+    "block_reason": null,
+    "error": null,
+    "requires_human_review": false,
+    "notes": "Informal wording; may fail if classifier misses CURRENT."
+  }
+}

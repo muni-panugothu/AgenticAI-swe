@@ -40,6 +40,63 @@ class TestNoWhitespaceExtraction(unittest.TestCase):
         values = {f.normalized_value for f in result.facts}
         self.assertEqual(values, {"vs code", "intellij idea"})
 
+    def test_compound_language_and_project_are_independent_memories(self):
+        result = extract_facts_from_message(
+            "Remember that my preferred programming language is JavaScript "
+            "and my project is FreshCart."
+        )
+        self.assertEqual(
+            [(fact.fact_key, fact.normalized_value) for fact in result.facts],
+            [("preferred_language", "javascript"), ("primary_project", "freshcart")],
+        )
+
+    def test_keep_project_clause_splits_from_updated_language(self):
+        result = extract_facts_from_message(
+            "Remember that my preferred language is Python, "
+            "but keep my project as FreshCart."
+        )
+        self.assertEqual(
+            [(fact.fact_key, fact.normalized_value) for fact in result.facts],
+            [("preferred_language", "python"), ("primary_project", "freshcart")],
+        )
+
+    def test_database_and_ai_project_are_independent_facts(self):
+        result = extract_facts_from_message(
+            "Remember that my favorite database is MongoDB and "
+            "my AI project is AgenticAI-swe."
+        )
+        self.assertEqual(
+            [(fact.fact_key, fact.normalized_value) for fact in result.facts],
+            [("preferred_database", "mongodb"), ("project_name", "agenticai swe")],
+        )
+
+    def test_ai_project_does_not_claim_to_replace_primary_project(self):
+        result = extract_facts_from_message(
+            "Remember that my AI project is AgenticAI-swe."
+        )
+        self.assertEqual(len(result.facts), 1)
+        self.assertEqual(result.facts[0].fact_key, "project_name")
+        self.assertFalse(result.facts[0].exclusive)
+
+    def test_same_database_with_new_ai_project_is_not_a_database_conflict(self):
+        incoming = extract_facts_from_message(
+            "Remember that my favorite database is MongoDB and "
+            "my AI project is AgenticAI-swe."
+        )
+        database_fact = incoming.facts[0]
+        conflict = detect_memory_conflict(
+            database_fact.statement,
+            [
+                {
+                    "memory_id": "legacy-db-project",
+                    "memory": "My preferred database is MongoDB and my project is Alpha",
+                    "fact_key": "preferred_database",
+                    "normalized_value": "mongodb",
+                }
+            ],
+        )
+        self.assertFalse(conflict["has_conflict"])
+
     def test_preserves_decimals_and_abbreviations(self):
         parts = split_statements("Remember that version 11.0 is stable.")
         self.assertEqual(len(parts), 1)

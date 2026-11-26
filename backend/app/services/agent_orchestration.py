@@ -138,6 +138,89 @@ def _is_educational_or_conceptual(text: str) -> bool:
     return False
 
 
+def _requires_current_information(text: str) -> bool:
+    """True when the answer depends on live / changing external facts.
+
+    Must run before educational→technical fallthrough so questions like
+    ``What is the current Chief Minister of Telangana?`` are not treated as
+    tool-free conceptual answers (parametric knowledge goes stale).
+    """
+    if not text or not text.strip():
+        return False
+
+    # Explicit web / news / weather requests.
+    if re.search(
+        r"(?i)\b("
+        r"search the web|search online|look up online|"
+        r"latest news|breaking news|headlines|"
+        r"weather|forecast"
+        r")\b",
+        text,
+    ):
+        return True
+
+    # Clock / calendar (paired with get_current_time).
+    if re.search(
+        r"(?i)\b(current time|what time|today'?s date|what(?:'s| is) (the )?date)\b",
+        text,
+    ):
+        return True
+
+    # Live markets / rates / scores.
+    if re.search(
+        r"(?i)\b("
+        r"(usd|inr|eur|gbp|bitcoin|btc|eth|crypto).{0,20}(price|rate|exchange)|"
+        r"(exchange rate|stock price|share price|market price)|"
+        r"live (score|scores|results?|updates?)"
+        r")\b",
+        text,
+    ):
+        return True
+
+    # Current officeholders / political / org leadership.
+    if re.search(
+        r"(?i)\b("
+        r"who is (the )?(current|present)|"
+        r"who (is|are) (currently|presently)|"
+        r"current (chief minister|prime minister|president|governor|mayor|"
+        r"cm|ceo|speaker|chancellor)|"
+        r"chief minister of|prime minister of|"
+        r"who won\b|election results?"
+        r")\b",
+        text,
+    ):
+        return True
+
+    # "current … of …" / latest developments / versions that change.
+    if re.search(
+        r"(?i)\bcurrent\b.{0,48}\b("
+        r"minister|president|governor|mayor|ceo|cm of|"
+        r"price of|rate for|version of|standings?|ranking"
+        r")\b",
+        text,
+    ):
+        return True
+
+    if re.search(
+        r"(?i)\b("
+        r"(latest|recent) (developments?|news|release|version|update|updates?)|"
+        r"as of today|right now"
+        r")\b",
+        text,
+    ):
+        return True
+
+    # Time-bound “what’s new …” without treating product names as repo targets.
+    if re.search(
+        r"(?i)\b(what(?:'s| is) new)\b.{0,48}\b"
+        r"(this (month|week|year)|in the (month|week|year)|lately|recently)\b",
+        text,
+    ):
+        return True
+
+    return False
+
+
 def _targets_user_repo(text: str) -> bool:
     """True when the user points at their codebase files / this repository.
 
@@ -395,6 +478,32 @@ def classify_intent(user_message: str) -> str:
     if _requests_personal_memory_metadata(text):
         return INTENT_MEMORY
 
+    # Natural personal-recall requests often name the saved fact directly
+    # instead of saying "memory" (for example, "show my preferences" or
+    # "retrieve my saved preferences"). Route these to the memory path while
+    # keeping unrelated repository searches such as "find my agent loop"
+    # outside personal memory retrieval.
+    if re.search(
+        r"(?i)\b(?:what(?:'s|\s+is|\s+are)|which|show|tell\s+me|"
+        r"retrieve|recall|remind\s+me|list|get|find)\b"
+        r".{0,55}\b(?:my|me|i)\b.{0,40}\b"
+        r"(?:preferences?|favorites?|favourites?|preferred\s+"
+        r"(?:language|database|editor|project)|(?:language|database|"
+        r"editor|project)\s+i\s+prefer)\b",
+        text,
+    ) or re.search(
+        r"(?i)\b(?:what(?:'s|\s+(?:is|are))?|which)\b.{0,45}\b"
+        r"(?:preferences?|favorites?|favourites?)\b.{0,40}\b"
+        r"(?:do\s+i\s+have|are\s+mine)\b",
+        text,
+    ) or re.search(
+        r"(?i)\b(?:what|which)\b.{0,45}\b"
+        r"(?:programming\s+)?(?:language|database|editor|project)\b"
+        r".{0,30}\b(?:do\s+i\s+prefer|is\s+my\s+preferred)\b",
+        text,
+    ):
+        return INTENT_MEMORY
+
     # Memory operations (personal stored facts / metadata for a fact key)
     if re.search(
         r"(?i)\b("
@@ -418,12 +527,9 @@ def classify_intent(user_message: str) -> str:
     if re.search(r"\d+\s*[\+\-\*\/x×]\s*\d+", text) and len(text) < 80:
         return INTENT_CALC
 
-    # Current information
-    if re.search(
-        r"(?i)\b(current time|what time|today'?s date|latest news|"
-        r"search the web|look up online|weather)\b",
-        text,
-    ):
+    # Current / live external information — BEFORE educational fallthrough.
+    # Repo-local "current state of my X" stays investigation, not web search.
+    if _requires_current_information(text) and not _targets_user_repo(text):
         return INTENT_CURRENT
 
     # Greetings / small talk
@@ -852,25 +958,25 @@ def normalize_search_query(search_text: str) -> str:
 KNOWN_SYMBOL_LOCATIONS: dict[str, tuple[str, int]] = {
     # Keep these in sync with actual def lines (AST). Stale anchors that
     # fall inside a neighboring function make rebuild windows return None.
-    "classify_intent": ("app/services/agent_orchestration.py", 377),
-    "classify_groq_rate_limit": ("app/services/agent_orchestration.py", 704),
-    "is_tpm_rate_limit_error": ("app/services/agent_orchestration.py", 743),
-    "is_tpd_rate_limit_error": ("app/services/agent_orchestration.py", 748),
-    "is_rpm_rate_limit_error": ("app/services/agent_orchestration.py", 753),
-    "is_rpd_rate_limit_error": ("app/services/agent_orchestration.py", 757),
-    "is_daily_quota_exhausted": ("app/services/agent_orchestration.py", 761),
-    "execute_tool": ("app/chatbot.py", 810),
+    "classify_intent": ("app/services/agent_orchestration.py", 460),
+    "classify_groq_rate_limit": ("app/services/agent_orchestration.py", 810),
+    "is_tpm_rate_limit_error": ("app/services/agent_orchestration.py", 849),
+    "is_tpd_rate_limit_error": ("app/services/agent_orchestration.py", 854),
+    "is_rpm_rate_limit_error": ("app/services/agent_orchestration.py", 859),
+    "is_rpd_rate_limit_error": ("app/services/agent_orchestration.py", 863),
+    "is_daily_quota_exhausted": ("app/services/agent_orchestration.py", 867),
+    "execute_tool": ("app/chatbot.py", 1214),
     # TPM/TPD handling lives in the agent LLM error path.
     "rate_limit_retry_handling": ("app/chatbot.py", 3905),
-    "read_file": ("app/tools/file_reader.py", 221),
-    "ast_enclosing_symbol_span": ("app/tools/file_reader.py", 79),
-    "clip_to_function_boundary": ("app/tools/file_reader.py", 110),
+    "read_file": ("app/tools/file_reader.py", 316),
+    "ast_enclosing_symbol_span": ("app/tools/file_reader.py", 77),
+    "clip_to_function_boundary": ("app/tools/file_reader.py", 195),
     "InvestigationBudgetManager": ("app/services/investigation_state.py", 66),
     "InvestigationChecklist": ("app/services/investigation_state.py", 259),
     "build_budget_from_requirements": ("app/services/investigation_state.py", 420),
     "ReadFileInput": ("app/validation/tool_models.py", 23),
-    "canonicalize_read_file_args": ("app/services/agent_orchestration.py", 2780),
-    "build_finalization_messages": ("app/services/agent_orchestration.py", 3385),
+    "canonicalize_read_file_args": ("app/services/agent_orchestration.py", 3465),
+    "build_finalization_messages": ("app/services/agent_orchestration.py", 4128),
     # Memory architecture — module-level functions (no MemoryService class).
     "memory_scope_keys": ("app/services/memory_summary_service.py", 216),
     "detect_memory_conflict": ("app/services/memory_conflict_service.py", 578),
@@ -882,31 +988,39 @@ KNOWN_SYMBOL_LOCATIONS: dict[str, tuple[str, int]] = {
         "app/services/memory_lifecycle_service.py",
         60,
     ),
-    "summarize_user_memories": ("app/services/memory_summary_service.py", 1175),
-    "reinforce_memory": ("app/services/memory_service.py", 2482),
-    "delete_memory": ("app/services/memory_service.py", 3322),
-    "record_audit_event": ("app/services/memory_audit_service.py", 77),
-    "create_embedding": ("app/services/embedding_service.py", 48),
-    "semantic_search_memories": ("app/services/memory_service.py", 2155),
+    "summarize_user_memories": ("app/services/memory_summary_service.py", 1257),
+    "reinforce_memory": ("app/services/memory_service.py", 2636),
+    "delete_memory": ("app/services/memory_service.py", 3485),
+    "record_audit_event": ("app/services/memory_audit_service.py", 81),
+    "create_embedding": ("app/services/embedding_service.py", 176),
+    "semantic_search_memories": ("app/services/memory_service.py", 2281),
     # Prefer discover_symbol_definition when stale; kept as a fast hint only.
-    "add_to_conversation_memory": ("app/chatbot.py", 968),
-    "get_conversation_memory": ("app/chatbot.py", 987),
+    "add_to_conversation_memory": ("app/chatbot.py", 1095),
+    "get_conversation_memory": ("app/chatbot.py", 1114),
 }
 
 # Inclusive AST end lines for known symbols (never merge neighbors).
 KNOWN_SYMBOL_END_LINES: dict[str, int] = {
+    "classify_intent": 584,
+    "classify_groq_rate_limit": 846,
+    "is_tpm_rate_limit_error": 851,
+    "is_tpd_rate_limit_error": 856,
+    "is_rpm_rate_limit_error": 860,
+    "is_rpd_rate_limit_error": 864,
+    "is_daily_quota_exhausted": 868,
+    "execute_tool": 1356,
     "memory_scope_keys": 258,
     "detect_memory_conflict": 594,
     "calculate_memory_freshness_score": 57,
     "calculate_memory_priority_score": 93,
-    "summarize_user_memories": 1227,
-    "reinforce_memory": 2635,
-    "delete_memory": 3437,
-    "record_audit_event": 127,
-    "create_embedding": 86,
-    "semantic_search_memories": 2436,
-    "add_to_conversation_memory": 980,
-    "get_conversation_memory": 989,
+    "summarize_user_memories": 1322,
+    "reinforce_memory": 2798,
+    "delete_memory": 3608,
+    "record_audit_event": 131,
+    "create_embedding": 213,
+    "semantic_search_memories": 2590,
+    "add_to_conversation_memory": 1107,
+    "get_conversation_memory": 1116,
 }
 
 # Cache for filesystem definition discovery (path may move across modules).
@@ -1440,10 +1554,31 @@ def intent_needs_long_term_memory(
         r"who am i|"
         r"what do you (know|remember) about me|"
         r"remember about me|"
+        r"did i (tell|ask) you|"
+        r"ask(?:ed)? you to remember|"
+        r"what did i (save|store|remember)|"
         r"my (current )?(primary )?(preferred )?"
         r"(project|name|editor|language|database|city|job|role|"
         r"preference|favorite)"
         r")\b",
+        lowered,
+    ):
+        return True
+    # Natural recall phrasing often names the fact before the first-person
+    # subject ("Which language do I prefer?", "What project am I working
+    # on?"). Keep this narrow to personal fact terms so ordinary technical
+    # questions do not trigger a full long-term-memory load.
+    personal_fact = (
+        r"(?:preferred\s+)?(?:programming\s+)?language|project|editor|database|"
+        r"preference|favorite|favourite|city|job|role|company|goal"
+    )
+    if re.search(
+        rf"(?i)\b(?:what|which|tell\s+me|remind\s+me)\b.{{0,55}}"
+        rf"\b(?:{personal_fact})\b.{{0,55}}\b(?:my|i|me)\b",
+        lowered,
+    ) or re.search(
+        rf"(?i)\b(?:do\s+you\s+remember|remember|recall)\b.{{0,35}}"
+        rf"\b(?:my|what\s+i)\b.{{0,40}}\b(?:{personal_fact})\b",
         lowered,
     ):
         return True
@@ -1638,6 +1773,32 @@ def _append_memory_architecture_targets(
                     feature=f"{feature}_tests",
                 )
             )
+
+
+def scope_investigation_requirements_for_intent(
+    intent: str,
+    requirements: dict | None,
+) -> dict:
+    """Apply codebase evidence targets only on investigation intents.
+
+    Current/web/calc/memory/general/RAG turns must not invent ``read_file``
+    requirements from product names (e.g. ``FastAPI`` in a web-search query)
+    or treat the word ``search`` as a mandatory ``search_code`` obligation.
+    Preserves Topics 36 / B4–B6 investigation contracts for CODEBASE/DEBUG.
+    """
+    req = dict(requirements or {})
+    if intent in {INTENT_CODEBASE, INTENT_DEBUG}:
+        return req
+    req["required_targets"] = []
+    req["needs_search"] = False
+    req["needs_source_reads"] = False
+    req["needs_complete_function"] = False
+    req["min_source_reads"] = 0
+    req["rate_limit_categories"] = []
+    if intent != INTENT_CALC:
+        req["needs_calculator"] = False
+    req["scoped_out_for_intent"] = intent
+    return req
 
 
 def derive_investigation_requirements(user_message: str) -> dict:
@@ -3291,7 +3452,7 @@ def is_premature_or_generic_answer(
 
 
 def validate_final_answer_text(answer: str) -> str:
-    """Remove incomplete fenced code and trim runaway beginner answers."""
+    """Remove an unfinished trailing code fence without clipping prose."""
     text = (answer or "").strip()
     if not text:
         return text
@@ -3303,12 +3464,6 @@ def validate_final_answer_text(answer: str) -> str:
             "\n\n(Note: an incomplete code example was omitted so the "
             "answer stays complete.)"
         )
-    # Soft length cap for conversational teaching answers.
-    if len(text) > 2800:
-        # Prefer cutting at a paragraph boundary.
-        cut = text[:2800].rsplit("\n\n", 1)[0].rstrip()
-        if len(cut) > 600:
-            text = cut
     return text.strip()
 
 

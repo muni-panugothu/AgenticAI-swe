@@ -2,35 +2,80 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   Pressable,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Colors } from '../constants/colors';
+import { Ionicons } from '@expo/vector-icons';
+import { AuthTheme } from '../constants/authTheme';
+import { AuthChrome } from '../components/AuthChrome';
+import { AuthPrimaryButton } from '../components/AuthPrimaryButton';
+import { AuthSocialRow } from '../components/AuthSocialRow';
+import { AuthTextField } from '../components/AuthTextField';
+import {
+  EmailFieldIcon,
+  PasswordFieldIcon,
+  PersonFieldIcon,
+} from '../components/AuthFieldIcons';
 import { useAuth } from '../context/AuthContext';
 
 interface RegisterScreenProps {
   onGoLogin: () => void;
+  onOpenTerms: () => void;
+  onOpenPrivacy: () => void;
 }
 
-export const RegisterScreen: React.FC<RegisterScreenProps> = ({ onGoLogin }) => {
+export const RegisterScreen: React.FC<RegisterScreenProps> = ({
+  onGoLogin,
+  onOpenTerms,
+  onOpenPrivacy,
+}) => {
   const { signUp } = useAuth();
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const onSubmit = async () => {
     setError(null);
+    if (!displayName.trim()) {
+      setError('Please enter your name');
+      return;
+    }
+    if (!email.trim()) {
+      setError('Please enter your email');
+      return;
+    }
+    if (!password) {
+      setError('Please enter a password');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters');
+      return;
+    }
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+      setError('Password needs upper, lower, and a number');
+      return;
+    }
+    if (!acceptedLegal) {
+      setError('Please accept the Terms of Use & Privacy Policy');
+      return;
+    }
+
     setLoading(true);
     try {
-      await signUp(email.trim(), password);
+      await signUp({
+        displayName: displayName.trim(),
+        email: email.trim(),
+        password,
+        acceptedTerms: true,
+        acceptedPrivacy: true,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Registration failed');
     } finally {
@@ -39,150 +84,182 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ onGoLogin }) => 
   };
 
   return (
-    <View style={styles.root}>
-      <LinearGradient
-        colors={['#FAFAFE', '#F0EBFF', '#EDE5FF']}
-        style={StyleSheet.absoluteFill}
-      />
-      <SafeAreaView style={styles.safe}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.flex}
+    <AuthChrome>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.flex}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+          showsVerticalScrollIndicator={false}
         >
-          <ScrollView
-            contentContainerStyle={styles.scroll}
-            keyboardShouldPersistTaps="handled"
+          <Pressable style={styles.backBtn} hitSlop={12} onPress={onGoLogin}>
+            <Ionicons
+              name="arrow-undo-outline"
+              size={26}
+              color={AuthTheme.textPrimary}
+            />
+          </Pressable>
+
+          <Text style={styles.heading}>Create Your Account</Text>
+          <Text style={styles.subtitle}>
+            Cancel Being Broke! Plan every Penny!
+          </Text>
+
+          <AuthTextField
+            leftIcon={<PersonFieldIcon />}
+            autoCapitalize="words"
+            textContentType="name"
+            value={displayName}
+            onChangeText={setDisplayName}
+            placeholder="Your Name"
+          />
+          <AuthTextField
+            leftIcon={<EmailFieldIcon />}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            textContentType="emailAddress"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="Your Email"
+          />
+          <AuthTextField
+            leftIcon={<PasswordFieldIcon />}
+            secure
+            textContentType="newPassword"
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Your Password"
+          />
+
+          <Pressable
+            style={styles.termsRow}
+            onPress={() => setAcceptedLegal((v) => !v)}
           >
-            <Text style={styles.brand}>Create account</Text>
-            <Text style={styles.subtitle}>
-              Use 8+ chars with upper, lower, and a number
-            </Text>
-
-            <View style={styles.card}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.input}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@company.com"
-                placeholderTextColor={Colors.text.muted}
-              />
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={styles.input}
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Secret1pass"
-                placeholderTextColor={Colors.text.muted}
-              />
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-              <Pressable
-                style={({ pressed }) => [
-                  styles.button,
-                  pressed && styles.buttonPressed,
-                ]}
-                onPress={onSubmit}
-                disabled={loading}
-              >
-                <LinearGradient
-                  colors={[Colors.gradient.purpleStart, Colors.gradient.purpleEnd]}
-                  style={styles.buttonGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.buttonText}>Register</Text>
-                  )}
-                </LinearGradient>
-              </Pressable>
+            <View
+              style={[
+                styles.checkbox,
+                acceptedLegal && styles.checkboxChecked,
+              ]}
+            >
+              {acceptedLegal ? (
+                <Ionicons name="checkmark" size={11} color="#000" />
+              ) : null}
             </View>
-
-            <Pressable onPress={onGoLogin} style={styles.linkWrap}>
-              <Text style={styles.link}>
-                Have an account? <Text style={styles.linkAccent}>Sign in</Text>
+            <Text style={styles.termsText}>
+              I accept the{' '}
+              <Text style={styles.termsLink} onPress={onOpenTerms}>
+                Terms of Use
               </Text>
+              {' & '}
+              <Text style={styles.termsLink} onPress={onOpenPrivacy}>
+                Privacy Policy
+              </Text>
+            </Text>
+          </Pressable>
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <AuthPrimaryButton
+            label="Sign Up"
+            onPress={onSubmit}
+            loading={loading}
+          />
+
+          <AuthSocialRow />
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Already have an Account? </Text>
+            <Pressable onPress={onGoLogin} hitSlop={6}>
+              <Text style={styles.footerAccent}>Sign In</Text>
             </Pressable>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </AuthChrome>
   );
 };
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  safe: { flex: 1 },
   flex: { flex: 1 },
   scroll: {
     flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 48,
-    paddingBottom: 32,
-    justifyContent: 'center',
+    paddingHorizontal: 28,
+    paddingTop: 56,
+    paddingBottom: 36,
   },
-  brand: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: Colors.text.primary,
-    textAlign: 'center',
+  backBtn: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    marginBottom: 18,
+  },
+  heading: {
+    color: AuthTheme.textPrimary,
+    fontSize: 30,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    lineHeight: 36,
   },
   subtitle: {
     marginTop: 8,
     marginBottom: 28,
+    color: AuthTheme.textSecondary,
     fontSize: 14,
-    color: Colors.text.secondary,
-    textAlign: 'center',
+    lineHeight: 20,
   },
-  card: {
-    backgroundColor: Colors.surface,
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border.light,
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 4,
+    marginBottom: 14,
   },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.text.secondary,
-    marginBottom: 6,
-    marginTop: 10,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: Colors.border.light,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: Colors.text.primary,
-    backgroundColor: '#FDFCFF',
-  },
-  error: {
-    color: '#DC2626',
-    marginTop: 12,
-    fontSize: 14,
-  },
-  button: {
-    marginTop: 20,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  buttonPressed: { opacity: 0.92 },
-  buttonGradient: {
-    paddingVertical: 14,
+  checkbox: {
+    width: 15,
+    height: 15,
+    marginTop: 2,
+    marginRight: 10,
+    borderRadius: 3,
+    borderWidth: 1.5,
+    borderColor: AuthTheme.checkboxBorder,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  checkboxChecked: {
+    backgroundColor: AuthTheme.accent,
+    borderColor: AuthTheme.accent,
+  },
+  termsText: {
+    flex: 1,
+    color: AuthTheme.textPrimary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  termsLink: {
+    color: AuthTheme.accent,
     fontWeight: '700',
   },
-  linkWrap: { marginTop: 24, alignItems: 'center' },
-  link: { fontSize: 15, color: Colors.text.secondary },
-  linkAccent: { color: Colors.primary[600], fontWeight: '700' },
+  error: {
+    color: AuthTheme.error,
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  footer: {
+    marginTop: 32,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  footerText: {
+    color: AuthTheme.textPrimary,
+    fontSize: 14,
+  },
+  footerAccent: {
+    color: AuthTheme.accent,
+    fontSize: 14,
+    fontWeight: '800',
+  },
 });

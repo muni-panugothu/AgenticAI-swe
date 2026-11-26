@@ -8,11 +8,22 @@ import { VoiceChatScreen } from '../screens/VoiceChatScreen';
 import { SmartChatScreen } from '../screens/SmartChatScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
+import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
+import { ResetPasswordScreen } from '../screens/ResetPasswordScreen';
+import { LegalDocumentScreen } from '../screens/LegalDocumentScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { Colors } from '../constants/colors';
 import type { RootStackParamList } from '../types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+type AuthMode =
+  | 'login'
+  | 'register'
+  | 'forgot'
+  | 'reset'
+  | 'terms'
+  | 'privacy';
 
 const AppStack: React.FC = () => (
   <Stack.Navigator
@@ -35,11 +46,54 @@ const AppStack: React.FC = () => (
 );
 
 const AuthStack: React.FC = () => {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  return mode === 'login' ? (
-    <LoginScreen onGoRegister={() => setMode('register')} />
-  ) : (
-    <RegisterScreen onGoLogin={() => setMode('login')} />
+  const [mode, setMode] = useState<AuthMode>('login');
+  const [legalReturn, setLegalReturn] = useState<AuthMode>('login');
+
+  const openLegal = (kind: 'terms' | 'privacy') => {
+    setLegalReturn(mode === 'terms' || mode === 'privacy' ? legalReturn : mode);
+    setMode(kind);
+  };
+
+  if (mode === 'register') {
+    return (
+      <RegisterScreen
+        onGoLogin={() => setMode('login')}
+        onOpenTerms={() => openLegal('terms')}
+        onOpenPrivacy={() => openLegal('privacy')}
+      />
+    );
+  }
+  if (mode === 'forgot') {
+    return (
+      <ForgotPasswordScreen
+        onBack={() => setMode('login')}
+        onHaveToken={() => setMode('reset')}
+      />
+    );
+  }
+  if (mode === 'reset') {
+    return (
+      <ResetPasswordScreen
+        onBack={() => setMode('forgot')}
+        onDone={() => setMode('login')}
+      />
+    );
+  }
+  if (mode === 'terms' || mode === 'privacy') {
+    return (
+      <LegalDocumentScreen
+        kind={mode}
+        onBack={() => setMode(legalReturn === 'terms' || legalReturn === 'privacy' ? 'login' : legalReturn)}
+      />
+    );
+  }
+  return (
+    <LoginScreen
+      onGoRegister={() => setMode('register')}
+      onForgotPassword={() => setMode('forgot')}
+      onOpenTerms={() => openLegal('terms')}
+      onOpenPrivacy={() => openLegal('privacy')}
+    />
   );
 };
 
@@ -72,6 +126,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FAFAFE',
+    backgroundColor: '#000000',
   },
 });

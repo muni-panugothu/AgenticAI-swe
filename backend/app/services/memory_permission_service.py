@@ -64,11 +64,23 @@ def _same_project(doc: dict, *, project_id: str | None) -> bool:
     return doc_project == req_project
 
 
-def _same_tenant(doc: dict, *, tenant_id: str | None) -> bool:
+def _same_tenant(
+    doc: dict,
+    *,
+    tenant_id: str | None,
+    user_id: str,
+) -> bool:
     doc_tenant = _clean_id(doc.get("tenant_id"))
     req_tenant = _clean_id(tenant_id)
     if req_tenant is None and doc_tenant is None:
         return True
+    if req_tenant is not None and doc_tenant is None:
+        # A missing tenant is tolerated only for the authenticated user's own
+        # legacy private row. It grants no shared or cross-user access.
+        return (
+            _clean_id(doc.get("user_id")) == str(user_id).strip()
+            and memory_owner_id(doc) == str(user_id).strip()
+        )
     if req_tenant is None or doc_tenant is None:
         return False
     return doc_tenant == req_tenant
@@ -177,7 +189,7 @@ def _check_permission(
         )
 
     # Tenant boundary — missing/mismatched tenant never grants cross-tenant access.
-    if not _same_tenant(memory_doc, tenant_id=tenant_id):
+    if not _same_tenant(memory_doc, tenant_id=tenant_id, user_id=uid):
         return _deny(
             user_id=uid,
             memory_doc=memory_doc,

@@ -1,0 +1,553 @@
+{
+  "meta": {
+    "dataset_version": "2.0.0",
+    "capture_run_id": "capture01",
+    "database": "agentic_ai_memory_rag_acl_test",
+    "dry_run": false,
+    "reranker": "none",
+    "mode": "hybrid",
+    "top_k": 6,
+    "context_token_budget": 3000,
+    "context_max_chunks": 8,
+    "lexical_backend": "overlap",
+    "embedding_model": "gemini-embedding-001",
+    "embedding_dimensions": 768,
+    "vector_index": "vector_index",
+    "ranking_semantics": "packed_candidates_only",
+    "answer_semantics": "retrieval_only_empty_answer",
+    "seed": {
+      "dry_run": false,
+      "database": "agentic_ai_memory_rag_acl_test",
+      "capture_run_id": "capture01",
+      "marker_field": "eval_capture_run_id",
+      "chunk_count": 7,
+      "marker_row_count": 7,
+      "chunk_ids": [
+        "doc-policy-md:0",
+        "doc-policy-md:1",
+        "doc-policy-md:2",
+        "doc-handbook-pdf:0",
+        "doc-handbook-pdf:1",
+        "doc-roster-csv:0",
+        "doc-other-tenant:0"
+      ],
+      "mapping": {
+        "document_count": 4,
+        "chunk_count": 7,
+        "case_count": 9,
+        "chunk_ids": [
+          "doc-handbook-pdf:0",
+          "doc-handbook-pdf:1",
+          "doc-other-tenant:0",
+          "doc-policy-md:0",
+          "doc-policy-md:1",
+          "doc-policy-md:2",
+          "doc-roster-csv:0"
+        ]
+      },
+      "writes": 7
+    }
+  },
+  "cases": {
+    "md-leave-notice": {
+      "retrieved_chunk_ids": [
+        "doc-policy-md:0",
+        "doc-policy-md:2",
+        "doc-policy-md:1",
+        "doc-handbook-pdf:1"
+      ],
+      "citation_chunk_ids": [
+        "doc-policy-md:0",
+        "doc-policy-md:2",
+        "doc-policy-md:1",
+        "doc-handbook-pdf:1"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — leave_policy.md section Purpose.\nThis employee leave policy describes paid time off eligibility for evaluation only.\nIt is not a real company policy and contains no personal data.",
+        "SYNTHETIC EVAL FIXTURE — notice period.\nAccording to the leave policy, the notice period is 14 days before planned leave begins.\nManagers should receive written notice at least 14 days in advance for scheduled absences.",
+        "SYNTHETIC EVAL FIXTURE — leave accrual.\nEmployees accrue leave monthly according to tenure bands defined in this evaluation document.\nAccrual examples are fictional and used only for RAG retrieval tests.",
+        "SYNTHETIC EVAL FIXTURE — safety drills.\nThe handbook says safety drills are conducted on a quarterly cadence.\nEvery team must complete the quarterly safety drill and record attendance."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 1759,
+      "embedding_calls": 1,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 1,
+        "lexical_hit_count": 4,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 328,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "According to the leave policy, what is the notice period?"
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    },
+    "pdf-handbook-safety": {
+      "retrieved_chunk_ids": [
+        "doc-handbook-pdf:1",
+        "doc-policy-md:0",
+        "doc-handbook-pdf:0",
+        "doc-policy-md:2"
+      ],
+      "citation_chunk_ids": [
+        "doc-handbook-pdf:1",
+        "doc-policy-md:0",
+        "doc-handbook-pdf:0",
+        "doc-policy-md:2"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — safety drills.\nThe handbook says safety drills are conducted on a quarterly cadence.\nEvery team must complete the quarterly safety drill and record attendance.",
+        "SYNTHETIC EVAL FIXTURE — leave_policy.md section Purpose.\nThis employee leave policy describes paid time off eligibility for evaluation only.\nIt is not a real company policy and contains no personal data.",
+        "SYNTHETIC EVAL FIXTURE — handbook welcome.\nThis evaluation handbook summarizes workplace guidelines for fixture testing only.\nNo real employee records are included.",
+        "SYNTHETIC EVAL FIXTURE — notice period.\nAccording to the leave policy, the notice period is 14 days before planned leave begins.\nManagers should receive written notice at least 14 days in advance for scheduled absences."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 1442,
+      "embedding_calls": 1,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 1,
+        "lexical_hit_count": 3,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 316,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "What does the handbook say about safety drills?"
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    },
+    "csv-roster-count": {
+      "retrieved_chunk_ids": [
+        "doc-roster-csv:0"
+      ],
+      "citation_chunk_ids": [
+        "doc-roster-csv:0"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — roster.csv for project proj-hr.\nrole,name\nengineer,Ada\nengineer,Grace\nengineer,Linus\nThere are 3 engineers listed in the roster for evaluation only."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 1402,
+      "embedding_calls": 1,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 0,
+        "lexical_hit_count": 1,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 112,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "How many engineers are listed in the roster?"
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    },
+    "multi-doc-policy-and-handbook": {
+      "retrieved_chunk_ids": [
+        "doc-policy-md:0",
+        "doc-policy-md:2",
+        "doc-handbook-pdf:1",
+        "doc-policy-md:1"
+      ],
+      "citation_chunk_ids": [
+        "doc-policy-md:0",
+        "doc-policy-md:2",
+        "doc-handbook-pdf:1",
+        "doc-policy-md:1"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — leave_policy.md section Purpose.\nThis employee leave policy describes paid time off eligibility for evaluation only.\nIt is not a real company policy and contains no personal data.",
+        "SYNTHETIC EVAL FIXTURE — notice period.\nAccording to the leave policy, the notice period is 14 days before planned leave begins.\nManagers should receive written notice at least 14 days in advance for scheduled absences.",
+        "SYNTHETIC EVAL FIXTURE — safety drills.\nThe handbook says safety drills are conducted on a quarterly cadence.\nEvery team must complete the quarterly safety drill and record attendance.",
+        "SYNTHETIC EVAL FIXTURE — leave accrual.\nEmployees accrue leave monthly according to tenure bands defined in this evaluation document.\nAccrual examples are fictional and used only for RAG retrieval tests."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 2494,
+      "embedding_calls": 3,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 1,
+        "lexical_hit_count": 4,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 328,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "Summarize leave notice and safety drill cadence from the uploaded documents.",
+          "Summarize leave notice",
+          "safety drill cadence from the uploaded documents."
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    },
+    "no-support-home-address": {
+      "retrieved_chunk_ids": [
+        "doc-policy-md:0",
+        "doc-policy-md:2"
+      ],
+      "citation_chunk_ids": [
+        "doc-policy-md:0",
+        "doc-policy-md:2"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — leave_policy.md section Purpose.\nThis employee leave policy describes paid time off eligibility for evaluation only.\nIt is not a real company policy and contains no personal data.",
+        "SYNTHETIC EVAL FIXTURE — notice period.\nAccording to the leave policy, the notice period is 14 days before planned leave begins.\nManagers should receive written notice at least 14 days in advance for scheduled absences."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 795,
+      "embedding_calls": 1,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 1,
+        "lexical_hit_count": 2,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 184,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "What is Alice's home address?"
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    },
+    "acl-other-tenant": {
+      "retrieved_chunk_ids": [
+        "doc-policy-md:1",
+        "doc-handbook-pdf:0",
+        "doc-handbook-pdf:1",
+        "doc-policy-md:2",
+        "doc-policy-md:0"
+      ],
+      "citation_chunk_ids": [
+        "doc-policy-md:1",
+        "doc-handbook-pdf:0",
+        "doc-handbook-pdf:1",
+        "doc-policy-md:2",
+        "doc-policy-md:0"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — leave accrual.\nEmployees accrue leave monthly according to tenure bands defined in this evaluation document.\nAccrual examples are fictional and used only for RAG retrieval tests.",
+        "SYNTHETIC EVAL FIXTURE — handbook welcome.\nThis evaluation handbook summarizes workplace guidelines for fixture testing only.\nNo real employee records are included.",
+        "SYNTHETIC EVAL FIXTURE — safety drills.\nThe handbook says safety drills are conducted on a quarterly cadence.\nEvery team must complete the quarterly safety drill and record attendance.",
+        "SYNTHETIC EVAL FIXTURE — notice period.\nAccording to the leave policy, the notice period is 14 days before planned leave begins.\nManagers should receive written notice at least 14 days in advance for scheduled absences.",
+        "SYNTHETIC EVAL FIXTURE — leave_policy.md section Purpose.\nThis employee leave policy describes paid time off eligibility for evaluation only.\nIt is not a real company policy and contains no personal data."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 1445,
+      "embedding_calls": 1,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 5,
+        "lexical_hit_count": 4,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 391,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "What secrets are in mallory's document?"
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    },
+    "acl-private-owner": {
+      "retrieved_chunk_ids": [
+        "doc-policy-md:2",
+        "doc-policy-md:0",
+        "doc-policy-md:1",
+        "doc-handbook-pdf:1",
+        "doc-handbook-pdf:0"
+      ],
+      "citation_chunk_ids": [
+        "doc-policy-md:2",
+        "doc-policy-md:0",
+        "doc-policy-md:1",
+        "doc-handbook-pdf:1",
+        "doc-handbook-pdf:0"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — notice period.\nAccording to the leave policy, the notice period is 14 days before planned leave begins.\nManagers should receive written notice at least 14 days in advance for scheduled absences.",
+        "SYNTHETIC EVAL FIXTURE — leave_policy.md section Purpose.\nThis employee leave policy describes paid time off eligibility for evaluation only.\nIt is not a real company policy and contains no personal data.",
+        "SYNTHETIC EVAL FIXTURE — leave accrual.\nEmployees accrue leave monthly according to tenure bands defined in this evaluation document.\nAccrual examples are fictional and used only for RAG retrieval tests.",
+        "SYNTHETIC EVAL FIXTURE — safety drills.\nThe handbook says safety drills are conducted on a quarterly cadence.\nEvery team must complete the quarterly safety drill and record attendance.",
+        "SYNTHETIC EVAL FIXTURE — handbook welcome.\nThis evaluation handbook summarizes workplace guidelines for fixture testing only.\nNo real employee records are included."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 815,
+      "embedding_calls": 1,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 5,
+        "lexical_hit_count": 4,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 391,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "What is the leave notice period in my private policy?"
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    },
+    "acl-shared-read": {
+      "retrieved_chunk_ids": [
+        "doc-handbook-pdf:1",
+        "doc-handbook-pdf:0",
+        "doc-policy-md:2",
+        "doc-policy-md:1",
+        "doc-policy-md:0"
+      ],
+      "citation_chunk_ids": [
+        "doc-handbook-pdf:1",
+        "doc-handbook-pdf:0",
+        "doc-policy-md:2",
+        "doc-policy-md:1",
+        "doc-policy-md:0"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — safety drills.\nThe handbook says safety drills are conducted on a quarterly cadence.\nEvery team must complete the quarterly safety drill and record attendance.",
+        "SYNTHETIC EVAL FIXTURE — handbook welcome.\nThis evaluation handbook summarizes workplace guidelines for fixture testing only.\nNo real employee records are included.",
+        "SYNTHETIC EVAL FIXTURE — notice period.\nAccording to the leave policy, the notice period is 14 days before planned leave begins.\nManagers should receive written notice at least 14 days in advance for scheduled absences.",
+        "SYNTHETIC EVAL FIXTURE — leave accrual.\nEmployees accrue leave monthly according to tenure bands defined in this evaluation document.\nAccrual examples are fictional and used only for RAG retrieval tests.",
+        "SYNTHETIC EVAL FIXTURE — leave_policy.md section Purpose.\nThis employee leave policy describes paid time off eligibility for evaluation only.\nIt is not a real company policy and contains no personal data."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 1455,
+      "embedding_calls": 1,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 5,
+        "lexical_hit_count": 3,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 391,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "What does the shared handbook say about drills?"
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    },
+    "metadata-project-filter": {
+      "retrieved_chunk_ids": [
+        "doc-roster-csv:0"
+      ],
+      "citation_chunk_ids": [
+        "doc-roster-csv:0"
+      ],
+      "answer": "",
+      "abstained": false,
+      "evidence_texts": [
+        "SYNTHETIC EVAL FIXTURE — roster.csv for project proj-hr.\nrole,name\nengineer,Ada\nengineer,Grace\nengineer,Linus\nThere are 3 engineers listed in the roster for evaluation only."
+      ],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 1338,
+      "embedding_calls": 1,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "num_candidates": 800,
+        "candidate_limit": 80,
+        "min_vector_score": 0.25,
+        "vector_hit_count": 1,
+        "lexical_hit_count": 1,
+        "hyde_used": false,
+        "hyde_is_evidence": false,
+        "multi_query_used": false,
+        "compression_applied": false,
+        "context_token_budget": 3000,
+        "context_tokens": 112,
+        "lexical_backend_requested": "overlap",
+        "lexical_backend_used": "overlap",
+        "lexical_fallback": false,
+        "lexical_unavailable": false,
+        "reranker": "none",
+        "rerank_applied": false,
+        "rerank_fallback": null,
+        "rerank_top_n": 0,
+        "degraded": false,
+        "degraded_reason": null,
+        "rewritten_queries": [
+          "List roster rows for project proj-hr only."
+        ],
+        "has_readable_documents": true,
+        "ranking_semantics": "packed_candidates_only",
+        "answer_semantics": "retrieval_only_empty_answer",
+        "abstained_rule": "no_packed_candidates"
+      }
+    }
+  }
+}

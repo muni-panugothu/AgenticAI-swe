@@ -145,9 +145,28 @@ def build_scope_filter(
     else:
         ownership = {"user_id": ctx.user_id}
 
+    if ctx.tenant_id is None:
+        tenant_clause = _scope_field_clause("tenant_id", None)
+    else:
+        # Older private memories predate tenant tagging. Permit those only
+        # when the stored user_id is exactly the authenticated owner. Shared
+        # rows without tenant metadata stay excluded, and tagged rows still
+        # require an exact tenant match.
+        tenant_clause = {
+            "$or": [
+                {"tenant_id": ctx.tenant_id},
+                {
+                    "$and": [
+                        {"user_id": ctx.user_id},
+                        _scope_field_clause("tenant_id", None),
+                    ]
+                },
+            ]
+        }
+
     clauses = [
         ownership,
-        _scope_field_clause("tenant_id", ctx.tenant_id),
+        tenant_clause,
         _scope_field_clause("project_id", ctx.project_id),
     ]
     query: dict[str, Any] = {"$and": clauses}
@@ -176,9 +195,11 @@ def build_vector_search_filter(
         tenant_id=tenant_id,
         project_id=project_id,
     ).normalized()
+    # Keep the vector pre-filter on user_id. Legacy owner memories can lack a
+    # tenant_id, so exact tenant filtering here would hide them before the
+    # post-search authorization check. Tagged cross-tenant hits are discarded
+    # by document_matches_scope before ranking or context injection.
     filt: dict[str, Any] = {"user_id": ctx.user_id}
-    if ctx.tenant_id is not None:
-        filt["tenant_id"] = ctx.tenant_id
     if ctx.project_id is not None:
         filt["project_id"] = ctx.project_id
     return filt
@@ -216,6 +237,10 @@ def document_matches_scope(
     doc_tenant = _clean_id(doc.get("tenant_id"))
     if ctx.tenant_id is None:
         if doc_tenant is not None:
+            return False
+    elif doc_tenant is None:
+        # Compatibility is limited to genuinely user-owned legacy rows.
+        if doc_user != ctx.user_id or doc_owner != ctx.user_id:
             return False
     elif doc_tenant != ctx.tenant_id:
         return False

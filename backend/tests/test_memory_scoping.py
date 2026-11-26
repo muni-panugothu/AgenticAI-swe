@@ -92,6 +92,33 @@ class TestScopeValidation(unittest.TestCase):
             document_matches_scope(org2, user_id="user-a", tenant_id="org1")
         )
 
+    def test_legacy_tenantless_memory_is_visible_only_to_its_owner(self):
+        legacy = _doc(user_id="user-a", tenant_id=None)
+        self.assertTrue(
+            document_matches_scope(legacy, user_id="user-a", tenant_id="org1")
+        )
+        self.assertFalse(
+            document_matches_scope(legacy, user_id="user-b", tenant_id="org1")
+        )
+        # A forged owner_id cannot turn another user's untagged row into a
+        # legacy-owned row.
+        forged = _doc(user_id="user-b", tenant_id=None)
+        forged["owner_id"] = "user-a"
+        self.assertFalse(
+            document_matches_scope(forged, user_id="user-a", tenant_id="org1")
+        )
+
+    def test_vector_prefilter_leaves_tenant_validation_to_owner_safe_postfilter(self):
+        from app.services.memory_scope_service import build_vector_search_filter
+
+        self.assertEqual(
+            build_vector_search_filter(
+                user_id="user-a",
+                tenant_id="org1",
+            ),
+            {"user_id": "user-a"},
+        )
+
     def test_missing_tenant_never_matches_tagged_tenant(self):
         tagged = _doc(tenant_id="org1")
         self.assertFalse(
@@ -133,6 +160,63 @@ class TestScopeFilterQuery(unittest.TestCase):
         memories = result["memories"]
         self.assertEqual(len(memories), 1)
         self.assertEqual(memories[0]["project_id"], "alpha")
+
+    def test_get_memories_returns_legacy_owner_rows_with_tenant_context_only(self):
+        legacy = _doc(user_id="user-a", tenant_id=None, memory="legacy language")
+        foreign_tenant = _doc(
+            user_id="user-a", tenant_id="org2", memory="other tenant fact"
+        )
+        foreign_user = _doc(
+            user_id="user-b", tenant_id=None, memory="other user fact"
+        )
+        collection = MagicMock()
+        collection.find.return_value.sort.return_value.limit.return_value = [
+            legacy,
+            foreign_tenant,
+            foreign_user,
+        ]
+        with patch.object(memory_service, "memory_collection", collection):
+            result = memory_service.get_memories(
+                "user-a",
+                limit=10,
+                tenant_id="org1",
+            )
+        self.assertTrue(result["success"])
+        self.assertEqual([row["memory"] for row in result["memories"]], ["legacy language"])
+
+    def test_fact_key_lookup_recovers_project_from_legacy_compound_memory(self):
+        legacy = _doc(
+            user_id="user-a",
+            tenant_id=None,
+            memory=(
+                "My preferred language is Python, but keep my project as FreshCart"
+            ),
+        )
+        exact_cursor = MagicMock()
+        exact_cursor.sort.return_value.limit.return_value = []
+        legacy_cursor = MagicMock()
+        legacy_cursor.sort.return_value.limit.return_value = [legacy]
+        collection = MagicMock()
+        collection.find.side_effect = [exact_cursor, legacy_cursor]
+
+        with patch.object(memory_service, "memory_collection", collection):
+            result = memory_service.find_memories_by_fact_key(
+                "user-a",
+                "primary_project",
+                statuses=("active",),
+                tenant_id="org1",
+            )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(len(result["memories"]), 1)
+        self.assertEqual(result["memories"][0]["fact_key"], "primary_project")
+        self.assertEqual(result["memories"][0]["normalized_value"], "freshcart")
+
+    def test_ai_project_question_routes_to_named_project_memory(self):
+        self.assertIn(
+            "project_name",
+            memory_service.infer_query_fact_keys("What is my AI project?"),
+        )
 
 
 class TestSaveMemoryScopeFields(unittest.TestCase):

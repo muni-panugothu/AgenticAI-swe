@@ -140,6 +140,15 @@ class TestDuplicateReinforcementPrevention(unittest.TestCase):
 class TestChatWithAiExplicitMemoryRouting(unittest.TestCase):
     USER_ID = "stage19-routing-test"
 
+    def setUp(self):
+        # Isolate from Redis / in-process conversation leftovers for this user.
+        chatbot.clear_conversation_memory(self.USER_ID)
+        chatbot._get_conversation_store(self.USER_ID).clear()
+
+    def tearDown(self):
+        chatbot.clear_conversation_memory(self.USER_ID)
+        chatbot._get_conversation_store(self.USER_ID).clear()
+
     @patch.object(chatbot, "try_save_explicit_memory")
     def test_truthy_result_bypasses_agent_loop(self, mock_save):
         mock_save.return_value = {
@@ -174,7 +183,10 @@ class TestChatWithAiExplicitMemoryRouting(unittest.TestCase):
                 user_id=self.USER_ID,
             )
 
+        # Greeting must return the model text without a B6 partial-workflow
+        # suffix — advisory never-started boards must not annotate.
         self.assertEqual(result, "Hello!")
+        self.assertNotIn("not fully finished", result)
         mock_client.chat.completions.create.assert_called()
 
 

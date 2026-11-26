@@ -1,43 +1,29 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
-  ScrollView,
   StyleSheet,
   StatusBar,
-  useWindowDimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { LinearGradient } from 'expo-linear-gradient';
-import { HomeHeader } from '../components/HomeHeader';
-import { GreetingSection } from '../components/GreetingSection';
-import { AIInput } from '../components/AIInput';
-import { QuickActionGrid } from '../components/QuickActionGrid';
-import { AIAnimation } from '../components/AIAnimation';
-import { BottomNavigation } from '../components/BottomNavigation';
+import { ChatHeader } from '../components/assistant/ChatHeader';
+import { HomeGreeting } from '../components/assistant/HomeGreeting';
+import { HomeQuickActions } from '../components/assistant/HomeQuickActions';
+import type { HomeQuickActionId } from '../components/assistant/HomeQuickActions';
+import { ChatComposer } from '../components/assistant/ChatComposer';
+import { ConversationDrawer } from '../components/assistant/ConversationDrawer';
+import { AssistantTheme } from '../constants/assistantTheme';
 import type { RootStackParamList } from '../types';
+import type { StoredConversation } from '../services/conversationStore';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
-  const { width, height } = useWindowDimensions();
-  const animationSize = Math.min(
-    Math.max(width * 0.6, 210),
-    Math.min(height * 0.3, 290)
-  );
-
-  const handleTabPress = useCallback(
-    (tabId: string) => {
-      if (tabId === 'ai') {
-        navigation.navigate('VoiceChat');
-      } else if (tabId === 'history') {
-        navigation.navigate('SmartChat');
-      }
-    },
-    [navigation]
-  );
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const handleSend = useCallback(
     (text: string) => {
@@ -46,49 +32,74 @@ export const HomeScreen: React.FC = () => {
     [navigation]
   );
 
-  const handleActionPress = useCallback(
-    (actionId: string) => {
-      navigation.navigate('SmartChat', { actionId });
+  const handleNewChat = useCallback(() => {
+    navigation.navigate('SmartChat', {});
+  }, [navigation]);
+
+  const handleSelectConversation = useCallback(
+    (conversation: StoredConversation) => {
+      navigation.navigate('SmartChat', { conversationId: conversation.id });
+    },
+    [navigation]
+  );
+
+  const handleQuickAction = useCallback(
+    (id: HomeQuickActionId) => {
+      if (id === 'voice') {
+        navigation.navigate('VoiceChat');
+        return;
+      }
+      if (id === 'image') {
+        navigation.navigate('SmartChat', {
+          initialMessage: 'Create an image or sticker for me',
+        });
+        return;
+      }
+      navigation.navigate('SmartChat', {
+        initialMessage: 'Help me write or edit something',
+      });
     },
     [navigation]
   );
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F7F7FD" />
-      <LinearGradient
-        colors={['#FAFAFE', '#F7F7FD', '#F0EBFF']}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 1 }}
-      />
-
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <HomeHeader
-          onProfilePress={() => navigation.navigate('Profile')}
+      <StatusBar barStyle="dark-content" backgroundColor={AssistantTheme.background} />
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        <ChatHeader
+          onMenuPress={() => navigation.navigate('Profile')}
+          onTogglePress={() => setDrawerOpen(true)}
         />
 
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          bounces
+        <KeyboardAvoidingView
+          style={styles.body}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <GreetingSection />
+          <HomeGreeting />
 
-          <View style={styles.inputSection}>
-            <AIInput onSend={handleSend} />
-          </View>
+          <HomeQuickActions onAction={handleQuickAction} />
 
-          <QuickActionGrid onActionPress={handleActionPress} />
-
-          <View style={styles.animationSection}>
-            <AIAnimation size={animationSize} autoPlay loop />
-          </View>
-        </ScrollView>
+          <ChatComposer
+            placeholder="Ask anything"
+            onSend={handleSend}
+            onAttachmentPress={() =>
+              navigation.navigate('SmartChat', { openAttach: true })
+            }
+            onVoicePress={() => navigation.navigate('VoiceChat')}
+          />
+        </KeyboardAvoidingView>
       </SafeAreaView>
 
-      <BottomNavigation activeTab="home" onTabPress={handleTabPress} />
+      <ConversationDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onNewChat={handleNewChat}
+        onSelectConversation={handleSelectConversation}
+        onOpenProfile={() => {
+          setDrawerOpen(false);
+          navigation.navigate('Profile');
+        }}
+      />
     </View>
   );
 };
@@ -96,28 +107,12 @@ export const HomeScreen: React.FC = () => {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#F7F7FD',
+    backgroundColor: AssistantTheme.background,
   },
-  container: {
+  safe: {
     flex: 1,
   },
-  scroll: {
+  body: {
     flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 20,
-    flexGrow: 1,
-  },
-  inputSection: {
-    marginTop: 20,
-    marginBottom: 20,
-  },
-  animationSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    marginBottom: 8,
-    flexGrow: 1,
-    minHeight: 190,
   },
 });

@@ -1,36 +1,86 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   StyleSheet,
   Pressable,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Colors } from '../constants/colors';
+import { Ionicons } from '@expo/vector-icons';
+import { AuthTheme } from '../constants/authTheme';
+import { AuthChrome } from '../components/AuthChrome';
+import { AuthPrimaryButton } from '../components/AuthPrimaryButton';
+import { AuthSocialRow } from '../components/AuthSocialRow';
+import { AuthTextField } from '../components/AuthTextField';
+import {
+  EmailFieldIcon,
+  PasswordFieldIcon,
+} from '../components/AuthFieldIcons';
 import { useAuth } from '../context/AuthContext';
+import {
+  getLastGreetingName,
+  getRememberedEmail,
+} from '../services/authStorage';
 
 interface LoginScreenProps {
   onGoRegister: () => void;
+  onForgotPassword: () => void;
+  onOpenTerms: () => void;
+  onOpenPrivacy: () => void;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onGoRegister }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({
+  onGoRegister,
+  onForgotPassword,
+  onOpenTerms,
+  onOpenPrivacy,
+}) => {
   const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
+  const [greetingName, setGreetingName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [name, remembered] = await Promise.all([
+        getLastGreetingName(),
+        getRememberedEmail(),
+      ]);
+      if (!alive) return;
+      setGreetingName(name);
+      if (remembered) {
+        setEmail(remembered);
+        setRememberMe(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const heading = greetingName
+    ? `Welcome Back, ${greetingName}!`
+    : 'Welcome Back!';
+
   const onSubmit = async () => {
     setError(null);
+    if (!email.trim()) {
+      setError('Please enter your email');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your password');
+      return;
+    }
     setLoading(true);
     try {
-      await signIn(email.trim(), password);
+      await signIn(email.trim(), password, rememberMe);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sign in failed');
     } finally {
@@ -39,154 +89,192 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onGoRegister }) => {
   };
 
   return (
-    <View style={styles.root}>
-      <LinearGradient
-        colors={['#FAFAFE', '#F0EBFF', '#EDE5FF']}
-        style={StyleSheet.absoluteFill}
-      />
-      <SafeAreaView style={styles.safe}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.flex}
+    <AuthChrome>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.flex}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+          showsVerticalScrollIndicator={false}
         >
-          <ScrollView
-            contentContainerStyle={styles.scroll}
-            keyboardShouldPersistTaps="handled"
-          >
-            <Text style={styles.brand}>Agentic AI</Text>
-            <Text style={styles.subtitle}>Sign in to your workspace</Text>
+          <Pressable style={styles.backBtn} hitSlop={12}>
+            <Ionicons
+              name="arrow-undo-outline"
+              size={26}
+              color={AuthTheme.textPrimary}
+            />
+          </Pressable>
 
-            <View style={styles.card}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.input}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@company.com"
-                placeholderTextColor={Colors.text.muted}
-              />
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={styles.input}
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-                placeholder="••••••••"
-                placeholderTextColor={Colors.text.muted}
-              />
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-              <Pressable
-                style={({ pressed }) => [
-                  styles.button,
-                  pressed && styles.buttonPressed,
-                ]}
-                onPress={onSubmit}
-                disabled={loading}
+          <Text style={styles.heading}>{heading}</Text>
+          <Text style={styles.subtitle}>Your Soft Life Era! Login to Plan.</Text>
+
+          <AuthTextField
+            leftIcon={<EmailFieldIcon />}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            textContentType="emailAddress"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="Your Email"
+          />
+          <AuthTextField
+            leftIcon={<PasswordFieldIcon />}
+            secure
+            textContentType="password"
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Your Password"
+          />
+
+          <View style={styles.row}>
+            <Pressable
+              style={styles.rememberWrap}
+              onPress={() => setRememberMe((v) => !v)}
+              hitSlop={8}
+            >
+              <View
+                style={[styles.checkbox, rememberMe && styles.checkboxChecked]}
               >
-                <LinearGradient
-                  colors={[Colors.gradient.purpleStart, Colors.gradient.purpleEnd]}
-                  style={styles.buttonGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.buttonText}>Sign In</Text>
-                  )}
-                </LinearGradient>
-              </Pressable>
-            </View>
-
-            <Pressable onPress={onGoRegister} style={styles.linkWrap}>
-              <Text style={styles.link}>
-                New here? <Text style={styles.linkAccent}>Create account</Text>
-              </Text>
+                {rememberMe ? (
+                  <Ionicons name="checkmark" size={11} color="#000" />
+                ) : null}
+              </View>
+              <Text style={styles.rememberText}>Remember Me.</Text>
             </Pressable>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </View>
+            <Pressable onPress={onForgotPassword}>
+              <Text style={styles.forgot}>Forgot Password?</Text>
+            </Pressable>
+          </View>
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <AuthPrimaryButton
+            label="Login"
+            onPress={onSubmit}
+            loading={loading}
+          />
+
+          <AuthSocialRow />
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Don't have an Account yet? </Text>
+            <Pressable onPress={onGoRegister} hitSlop={6}>
+              <Text style={styles.footerAccent}>Sign Up</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.legalRow}>
+            <Pressable onPress={onOpenTerms}>
+              <Text style={styles.legalLink}>Terms of Use</Text>
+            </Pressable>
+            <Text style={styles.legalSep}> · </Text>
+            <Pressable onPress={onOpenPrivacy}>
+              <Text style={styles.legalLink}>Privacy Policy</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </AuthChrome>
   );
 };
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  safe: { flex: 1 },
   flex: { flex: 1 },
   scroll: {
     flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 48,
-    paddingBottom: 32,
-    justifyContent: 'center',
+    paddingHorizontal: 28,
+    paddingTop: 56,
+    paddingBottom: 36,
   },
-  brand: {
+  backBtn: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    marginBottom: 18,
+  },
+  heading: {
+    color: AuthTheme.textPrimary,
     fontSize: 32,
-    fontWeight: '700',
-    color: Colors.text.primary,
-    textAlign: 'center',
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    lineHeight: 38,
   },
   subtitle: {
-    marginTop: 8,
-    marginBottom: 28,
-    fontSize: 16,
-    color: Colors.text.secondary,
-    textAlign: 'center',
-  },
-  card: {
-    backgroundColor: Colors.surface,
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: Colors.border.light,
-    shadowColor: Colors.shadow.card,
-    shadowOpacity: 1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.text.secondary,
-    marginBottom: 6,
     marginTop: 10,
+    marginBottom: 32,
+    color: AuthTheme.textSecondary,
+    fontSize: 15,
+    lineHeight: 22,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: Colors.border.light,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: Colors.text.primary,
-    backgroundColor: '#FDFCFF',
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 18,
   },
-  error: {
-    color: '#DC2626',
-    marginTop: 12,
-    fontSize: 14,
+  rememberWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  button: {
-    marginTop: 20,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  buttonPressed: { opacity: 0.92 },
-  buttonGradient: {
-    paddingVertical: 14,
+  checkbox: {
+    width: 14,
+    height: 14,
+    marginRight: 8,
+    borderRadius: 3,
+    borderWidth: 1.5,
+    borderColor: AuthTheme.checkboxBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
+  checkboxChecked: {
+    backgroundColor: AuthTheme.accent,
+    borderColor: AuthTheme.accent,
   },
-  linkWrap: { marginTop: 24, alignItems: 'center' },
-  link: { fontSize: 15, color: Colors.text.secondary },
-  linkAccent: { color: Colors.primary[600], fontWeight: '700' },
+  rememberText: {
+    color: AuthTheme.textPrimary,
+    fontSize: 13,
+  },
+  forgot: {
+    color: AuthTheme.accent,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  error: {
+    color: AuthTheme.error,
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  footer: {
+    marginTop: 36,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+  },
+  footerText: {
+    color: AuthTheme.textPrimary,
+    fontSize: 14,
+  },
+  footerAccent: {
+    color: AuthTheme.accent,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  legalRow: {
+    marginTop: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  legalLink: {
+    color: AuthTheme.textMuted,
+    fontSize: 12,
+    textDecorationLine: 'underline',
+  },
+  legalSep: {
+    color: AuthTheme.textMuted,
+    fontSize: 12,
+  },
 });

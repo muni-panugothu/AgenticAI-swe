@@ -6,7 +6,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import type { AuthUser } from '../services/authApi';
+import type { AuthUser, RegisterPayload } from '../services/authApi';
 import {
   fetchCurrentUser,
   login,
@@ -18,8 +18,12 @@ import { getStoredUser } from '../services/authStorage';
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signIn: (
+    email: string,
+    password: string,
+    rememberMe?: boolean
+  ) => Promise<void>;
+  signUp: (payload: RegisterPayload) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -52,13 +56,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     })();
   }, [refreshUser]);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    const session = await login(email, password);
-    setUser(session.user);
-  }, []);
+  const signIn = useCallback(
+    async (email: string, password: string, rememberMe = false) => {
+      const session = await login(email, password, rememberMe);
+      setUser(session.user);
+    },
+    []
+  );
 
-  const signUp = useCallback(async (email: string, password: string) => {
-    const session = await register(email, password);
+  const signUp = useCallback(async (payload: RegisterPayload) => {
+    const session = await register(payload);
     setUser(session.user);
   }, []);
 

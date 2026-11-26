@@ -12,6 +12,8 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+from app.services.memory_service import close_mongo_client
+
 from bson import ObjectId
 from fastapi.testclient import TestClient
 
@@ -93,6 +95,67 @@ class TestUserIsolation(unittest.TestCase):
         texts = " ".join(m["memory"] for m in res["memories"])
         self.assertIn("alice", texts)
         self.assertNotIn("bob db", texts)
+
+    def test_a2_unauthorized_not_in_logs_or_ranking(self):
+        alice = {
+            "memory_id": "a1",
+            "user_id": "user_a",
+            "owner_id": "user_a",
+            "memory": "alice database MongoDB",
+            "score": 0.9,
+            "status": "active",
+            "permission_level": "private",
+            "shared_with": [],
+        }
+        bob = dict(alice)
+        bob.update(
+            memory_id="b1",
+            user_id="user_b",
+            owner_id="user_b",
+            memory="bob secret PostgreSQL",
+        )
+        orphan = {
+            "memory_id": "o1",
+            "memory": "unowned leak string",
+            "score": 0.99,
+            "status": "active",
+            "permission_level": "public_read",
+            "shared_with": [],
+        }
+        captured: list[str] = []
+
+        def _capture_print(*args, **kwargs):
+            captured.append(" ".join(str(a) for a in args))
+
+        with patch("builtins.print", side_effect=_capture_print), patch(
+            "app.services.memory_service.create_embedding",
+            return_value=[0.1] * 8,
+        ), patch(
+            "app.services.memory_service._vector_search_memories",
+            return_value=[alice, bob, orphan],
+        ), patch(
+            "app.services.memory_service.find_memories_by_fact_key",
+            return_value={"success": True, "memories": []},
+        ), patch(
+            "app.services.memory_service.annotate_memories_with_lifecycle",
+            side_effect=lambda x: x,
+        ), patch(
+            "app.services.memory_service._record_memory_access"
+        ), patch(
+            "app.services.memory_service.record_audit_event"
+        ), patch(
+            "app.services.memory_service.search_memory_summaries",
+            return_value={"success": True, "summaries": []},
+        ):
+            res = semantic_search_memories("user_a", "database", limit=5)
+
+        log_blob = "\n".join(captured).lower()
+        self.assertNotIn("bob secret", log_blob)
+        self.assertNotIn("unowned leak", log_blob)
+        self.assertNotIn("postgresql", log_blob)
+        result_text = " ".join(m["memory"] for m in res["memories"])
+        self.assertIn("alice", result_text)
+        self.assertNotIn("bob secret", result_text)
 
 
 class TestProjectIsolation(unittest.TestCase):
@@ -304,13 +367,16 @@ class TestDirectApiImpersonation(unittest.TestCase):
             "app.services.auth_service._users_collection", lambda: users
         )
         self._patch_users.start()
+        self._patch_active = patch("app.services.auth_service.get_active_session", return_value=True)
+        self._patch_active.start()
 
     def tearDown(self):
         self._patch_users.stop()
+        self._patch_active.stop()
 
     def test_g22_forged_user_id_rejected(self):
         token = create_access_token(
-            user_id="usr_alice", email="a@test.com", tenant_id="ten_1"
+            user_id="usr_alice", email="a@test.com", tenant_id="ten_1", session_id="sess_test"
         )
         res = self.client.post(
             "/api/chat",
@@ -321,7 +387,7 @@ class TestDirectApiImpersonation(unittest.TestCase):
 
     def test_g23_forged_tenant_id_rejected(self):
         token = create_access_token(
-            user_id="usr_alice", email="a@test.com", tenant_id="ten_1"
+            user_id="usr_alice", email="a@test.com", tenant_id="ten_1", session_id="sess_test"
         )
         res = self.client.post(
             "/api/chat",
@@ -332,7 +398,7 @@ class TestDirectApiImpersonation(unittest.TestCase):
 
     def test_g24_forged_project_id_rejected(self):
         token = create_access_token(
-            user_id="usr_alice", email="a@test.com", tenant_id="ten_1"
+            user_id="usr_alice", email="a@test.com", tenant_id="ten_1", session_id="sess_test"
         )
         res = self.client.post(
             "/api/chat",
@@ -343,7 +409,7 @@ class TestDirectApiImpersonation(unittest.TestCase):
 
     def test_g25_forged_conversation_id_rejected(self):
         token = create_access_token(
-            user_id="usr_alice", email="a@test.com", tenant_id="ten_1"
+            user_id="usr_alice", email="a@test.com", tenant_id="ten_1", session_id="sess_test"
         )
         res = self.client.post(
             "/api/chat",
@@ -359,3 +425,4 @@ class TestDirectApiImpersonation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+    close_mongo_client()

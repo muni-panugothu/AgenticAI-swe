@@ -1,0 +1,193 @@
+{
+  "meta": {
+    "dataset_version": "2.0.0",
+    "capture_run_id": "capture01",
+    "database": "agentic_ai_memory_rag_acl_test",
+    "dry_run": true,
+    "reranker": "none",
+    "mode": "hybrid",
+    "top_k": 6,
+    "context_token_budget": 3000,
+    "context_max_chunks": 8,
+    "lexical_backend": "overlap",
+    "embedding_model": "gemini-embedding-001",
+    "embedding_dimensions": 768,
+    "vector_index": "vector_index",
+    "ranking_semantics": "packed_candidates_only",
+    "answer_semantics": "retrieval_only_empty_answer",
+    "seed": {
+      "dry_run": true,
+      "database": "agentic_ai_memory_rag_acl_test",
+      "capture_run_id": "capture01",
+      "marker_field": "eval_capture_run_id",
+      "document_count": 4,
+      "chunk_count": 7,
+      "chunk_ids": [
+        "doc-policy-md:0",
+        "doc-policy-md:1",
+        "doc-policy-md:2",
+        "doc-handbook-pdf:0",
+        "doc-handbook-pdf:1",
+        "doc-roster-csv:0",
+        "doc-other-tenant:0"
+      ],
+      "writes": 0,
+      "note": "Dry-run only; no Atlas writes, embeddings, or cleanup performed"
+    }
+  },
+  "cases": {
+    "md-leave-notice": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    },
+    "pdf-handbook-safety": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    },
+    "csv-roster-count": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    },
+    "multi-doc-policy-and-handbook": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    },
+    "no-support-home-address": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    },
+    "acl-other-tenant": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    },
+    "acl-private-owner": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    },
+    "acl-shared-read": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    },
+    "metadata-project-filter": {
+      "retrieved_chunk_ids": [],
+      "citation_chunk_ids": [],
+      "answer": "",
+      "abstained": true,
+      "evidence_texts": [],
+      "unauthorized_chunk_ids": [],
+      "acl_violation": false,
+      "latency_ms": 0,
+      "embedding_calls": 0,
+      "rerank_calls": 0,
+      "diagnostics": {
+        "dry_run": true,
+        "ranking_semantics": "packed_candidates_only",
+        "note": "Dry-run placeholder; retrieve() not executed"
+      }
+    }
+  }
+}

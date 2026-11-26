@@ -15,6 +15,7 @@
     "android": {
       "package": "com.aichatbot.app",
       "usesCleartextTraffic": true,
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#F8F5FF",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -28,6 +29,7 @@
     },
     "plugins": [
       "expo-dev-client",
+      "expo-secure-store",
       "expo-document-picker",
       [
         "expo-build-properties",

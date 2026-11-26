@@ -1,16 +1,47 @@
-fastapi
-uvicorn
-python-multipart
-python-dotenv
-groq
-langgraph
-langchain-core
-requests
-pymongo
-google-genai
-upstash-redis
-pydantic
-email-validator
-PyJWT
-argon2-cffi
-slowapi
+# Agent backend — required runtime dependencies.
+# Supported Python: 3.12, 3.13 (CI); 3.14 verified locally when wheels exist.
+# Install into the project venv only:  python -m pip install -r requirements.txt
+#
+# Do not treat RAG parsers (pypdf / python-docx / lxml / beautifulsoup4) as optional.
+
+# --- API / server ---
+fastapi>=0.110.0,<1
+uvicorn>=0.27.0,<1
+python-multipart>=0.0.9,<1
+starlette>=0.37.0,<2
+
+# --- Config / validation ---
+python-dotenv>=1.0.0,<2
+pydantic>=2.6.0,<3
+email-validator>=2.1.0,<3
+
+# --- LLM providers (Phase B: groq timeout + max_retries verified on 1.7.x) ---
+groq>=1.7.0,<2
+google-genai>=1.0.0,<4
+langgraph>=0.2.0,<2
+langchain-core>=0.3.0,<2
+
+# --- Data stores ---
+pymongo>=4.6.0,<5
+upstash-redis>=1.0.0,<2
+requests>=2.31.0,<3
+
+# --- Auth / abuse protection ---
+PyJWT>=2.8.0,<3
+argon2-cffi>=23.1.0,<26
+slowapi>=0.1.9,<1
+keyring>=25.6.0,<26
+
+# --- RAG Batch 1 parsers (REQUIRED — used by app.services.rag_parsers) ---
+pypdf>=5.0.0,<8
+python-docx>=1.1.0,<2
+beautifulsoup4>=4.12.0,<5
+# python-docx depends on lxml; keep an explicit required pin (cp314 wheels from 6.0+)
+lxml>=5.0.0,<7
+
+# --- RAG Topics 26–32 token budgets ---
+tiktoken>=0.7.0,<1
+
+# --- Optional (NOT installed by default; do not fail CI if missing) ---
+# Cross-encoder rerank when RAG_RERANKER=cross_encoder:
+#   pip install "sentence-transformers>=3.0.0,<4"
